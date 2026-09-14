@@ -1,0 +1,260 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>My AI</title>
+
+    <!-- =====================================================
+         CSS
+    ====================================================== -->
+
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
+
+
+    <!-- =====================================================
+         MARKDOWN
+    ====================================================== -->
+
+    <script
+        src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"
+    ></script>
+
+
+    <!-- =====================================================
+         HIGHLIGHT.JS CSS
+    ====================================================== -->
+
+    <link
+        rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css"
+    >
+
+
+    <!-- =====================================================
+         HIGHLIGHT.JS
+    ====================================================== -->
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"
+    ></script>
+
+
+    <!-- =====================================================
+         PYTHON
+    ====================================================== -->
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/python.min.js"
+    ></script>
+
+
+    <!-- =====================================================
+         JAVASCRIPT
+    ====================================================== -->
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/javascript.min.js"
+    ></script>
+
+
+    <!-- =====================================================
+         SQL
+    ====================================================== -->
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/sql.min.js"
+    ></script>
+
+
+    <!-- =====================================================
+         HTML / XML
+    ====================================================== -->
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/xml.min.js"
+    ></script>
+
+
+    <!-- =====================================================
+         CSS
+    ====================================================== -->
+
+    <script
+        src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/css.min.js"
+    ></script>
+
+</head>
+
+
+<body>
+
+
+    <!-- =====================================================
+         MAIN APPLICATION
+    ====================================================== -->
+
+    <div class="app">
+
+
+        <!-- =================================================
+             SIDEBAR
+        ================================================== -->
+
+        <aside class="sidebar">
+
+
+            <div class="sidebar-header">
+
+                <h2>My AI</h2>
+
+                <button
+                    type="button"
+                    id="new-chat"
+                >
+                    + New Chat
+                </button>
+
+            </div>
+
+
+            <!-- CHAT LIST -->
+
+            <div
+                id="chat-list"
+                class="chat-list"
+            ></div>
+
+
+        </aside>
+
+
+        <!-- =================================================
+             MAIN SECTION
+        ================================================== -->
+
+        <section class="main">
+
+
+            <!-- =============================================
+                 HEADER
+            ============================================== -->
+
+            <header>
+
+                <div>
+
+                    <h1>My AI</h1>
+
+                    <p>
+                        Powered by Llama 3.2
+                    </p>
+
+                </div>
+
+            </header>
+
+
+            <!-- =============================================
+                 CHAT AREA
+            ============================================== -->
+
+            <main id="chat">
+
+
+                <div class="welcome">
+
+                    <h2>
+                        How can I help you?
+                    </h2>
+
+                    <p>
+                        Ask me anything.
+                    </p>
+
+                </div>
+
+
+            </main>
+
+
+            <!-- =============================================
+                 INPUT AREA
+            ============================================== -->
+
+            <div class="input-area">
+
+
+                <!-- PDF -->
+
+                <input
+                    type="file"
+                    id="pdf"
+                    accept=".pdf,application/pdf"
+                >
+
+
+                <!-- MESSAGE -->
+
+                <input
+                    type="text"
+                    id="message"
+                    placeholder="Message My AI..."
+                    autocomplete="off"
+                >
+
+
+                <!-- SEND -->
+
+                <button
+                    type="button"
+                    id="send"
+                >
+                    Send
+                </button>
+
+
+                <!-- STOP -->
+
+                <button
+                    type="button"
+                    id="stop"
+                    style="display: none;"
+                >
+                    Stop
+                </button>
+
+
+            </div>
+
+
+        </section>
+
+
+    </div>
+
+
+    <!-- =====================================================
+         APPLICATION JAVASCRIPT
+    ====================================================== -->
+
+    <script
+        src="app.js"
+    ></script>
+
+
+</body>
+
+</html>
+```
