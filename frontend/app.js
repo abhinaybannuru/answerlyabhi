@@ -7,7 +7,7 @@
 // Automatically connects to the same PC/IP running FastAPI.
 // Local PC: http://127.0.0.1:8000
 // LAN/mobile: http://YOUR-PC-IP:8000
-const API = `http://${window.location.hostname}:8000`;
+const API = "https://answerlyabhi.onrender.com";
 
 let currentChatId = null;
 let currentController = null;
