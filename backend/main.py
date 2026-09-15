@@ -1,14 +1,24 @@
+
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import requests
+
 import sqlite3
 import uuid
 import json
 import re
+import os
+
 from pypdf import PdfReader
+from google import genai
+
+
+# ============================================================
+# APP
+# ============================================================
 
 app = FastAPI()
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,13 +28,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+
+# ============================================================
+# GEMINI
+# ============================================================
+
+gemini_client = genai.Client()
+
+GEMINI_MODEL = "gemini-3.6-flash"
+
 DATABASE = "chat_history.db"
 
 
-# ---------------- DATABASE ----------------
+# ============================================================
+# DATABASE
+# ============================================================
 
 def init_database():
+
     connection = sqlite3.connect(DATABASE)
     cursor = connection.cursor()
 
@@ -60,17 +81,25 @@ def init_database():
 init_database()
 
 
-# ---------------- HOME ----------------
+# ============================================================
+# HOME
+# ============================================================
 
 @app.get("/")
 def home():
-    return {"message": "My AI is running!"}
+
+    return {
+        "message": "AnswerlyAbhi AI is running!"
+    }
 
 
-# ---------------- NEW CHAT ----------------
+# ============================================================
+# NEW CHAT
+# ============================================================
 
 @app.post("/new-chat")
 def new_chat():
+
     chat_id = str(uuid.uuid4())
 
     connection = sqlite3.connect(DATABASE)
@@ -90,7 +119,9 @@ def new_chat():
     }
 
 
-# ---------------- PDF UPLOAD ----------------
+# ============================================================
+# PDF UPLOAD
+# ============================================================
 
 @app.post("/upload-pdf")
 async def upload_pdf(
@@ -99,35 +130,41 @@ async def upload_pdf(
 ):
 
     if not file.filename.lower().endswith(".pdf"):
+
         return {
             "error": "Please upload a PDF file."
         }
 
+    temp_filename = None
+
     try:
+
         file_bytes = await file.read()
 
-        # Save temporarily
+        # Temporary PDF filename
         temp_filename = f"temp_{uuid.uuid4()}.pdf"
 
         with open(temp_filename, "wb") as pdf_file:
             pdf_file.write(file_bytes)
 
-        # Extract text
+        # Extract PDF text
         reader = PdfReader(temp_filename)
 
         extracted_text = ""
 
         for page in reader.pages:
+
             page_text = page.extract_text()
 
             if page_text:
                 extracted_text += page_text + "\n"
 
         # Delete temporary PDF
-        import os
         os.remove(temp_filename)
+        temp_filename = None
 
         if not extracted_text.strip():
+
             return {
                 "error": "Could not extract text from this PDF."
             }
@@ -167,12 +204,21 @@ async def upload_pdf(
 
         print("PDF error:", error)
 
+        if temp_filename and os.path.exists(temp_filename):
+
+            try:
+                os.remove(temp_filename)
+            except:
+                pass
+
         return {
             "error": "Failed to process PDF."
         }
 
 
-# ---------------- PDF RETRIEVAL ----------------
+# ============================================================
+# PDF RETRIEVAL
+# ============================================================
 
 def get_relevant_pdf_text(chat_id, question):
 
@@ -207,7 +253,11 @@ def get_relevant_pdf_text(chat_id, question):
     chunk_size = 500
 
     for i in range(0, len(words), chunk_size):
-        chunk = " ".join(words[i:i + chunk_size])
+
+        chunk = " ".join(
+            words[i:i + chunk_size]
+        )
+
         chunks.append(chunk)
 
     # Extract useful words from question
@@ -229,7 +279,9 @@ def get_relevant_pdf_text(chat_id, question):
             )
         )
 
-        score = len(question_words.intersection(chunk_words))
+        score = len(
+            question_words.intersection(chunk_words)
+        )
 
         scored_chunks.append(
             (score, chunk)
@@ -248,6 +300,7 @@ def get_relevant_pdf_text(chat_id, question):
     ]
 
     if not best_chunks:
+
         best_chunks = chunks[:2]
 
     pdf_context = "\n\n".join(best_chunks)
@@ -258,7 +311,9 @@ def get_relevant_pdf_text(chat_id, question):
     }
 
 
-# ---------------- CHAT ----------------
+# ============================================================
+# CHAT
+# ============================================================
 
 @app.post("/chat")
 def chat(chat_id: str, message: str):
@@ -266,7 +321,10 @@ def chat(chat_id: str, message: str):
     connection = sqlite3.connect(DATABASE)
     cursor = connection.cursor()
 
-    # Save user message
+    # --------------------------------------------------------
+    # SAVE USER MESSAGE
+    # --------------------------------------------------------
+
     cursor.execute(
         """
         INSERT INTO messages
@@ -280,7 +338,10 @@ def chat(chat_id: str, message: str):
         )
     )
 
-    # Update title
+    # --------------------------------------------------------
+    # UPDATE CHAT TITLE
+    # --------------------------------------------------------
+
     cursor.execute(
         "SELECT title FROM chats WHERE id = ?",
         (chat_id,)
@@ -306,7 +367,10 @@ def chat(chat_id: str, message: str):
 
     connection.commit()
 
-    # Get conversation history
+    # --------------------------------------------------------
+    # GET CONVERSATION HISTORY
+    # --------------------------------------------------------
+
     cursor.execute(
         """
         SELECT role, content
@@ -321,25 +385,32 @@ def chat(chat_id: str, message: str):
 
     connection.close()
 
-    # Check for PDF
+    # --------------------------------------------------------
+    # CHECK PDF
+    # --------------------------------------------------------
+
     pdf_data = get_relevant_pdf_text(
         chat_id,
         message
     )
 
+    # --------------------------------------------------------
+    # CREATE PROMPT
+    # --------------------------------------------------------
+
     prompt = """
-You are my personal AI assistant.
+You are AnswerlyAbhi, a helpful personal AI assistant.
 
-Answer clearly and naturally.
+Answer clearly, naturally, and accurately.
 
-If a PDF context is provided, use it to answer
-questions about the PDF.
+If a PDF context is provided, use it when relevant.
 
-IMPORTANT:
+IMPORTANT PDF RULES:
 - Use the PDF information when relevant.
 - Do not invent information that is not in the PDF.
-- If the answer cannot be found in the PDF, say that
-  the information is not available in the uploaded PDF.
+- If the user asks something specifically about the PDF and
+  the answer cannot be found in the provided PDF context,
+  say that the information is not available in the uploaded PDF.
 - You can still answer normal questions when no PDF
   information is relevant.
 
@@ -349,10 +420,24 @@ Conversation:
     for role, content in messages:
 
         if role == "user":
-            prompt += "User: " + content + "\n"
+
+            prompt += (
+                "User: "
+                + content
+                + "\n"
+            )
 
         else:
-            prompt += "AI: " + content + "\n"
+
+            prompt += (
+                "Assistant: "
+                + content
+                + "\n"
+            )
+
+    # --------------------------------------------------------
+    # ADD PDF CONTEXT
+    # --------------------------------------------------------
 
     if pdf_data:
 
@@ -370,9 +455,11 @@ Relevant PDF content:
             pdf_data["content"]
         )
 
-    prompt += "\nAI:"
+    prompt += "\nAssistant:"
 
-    # ---------------- STREAMING ----------------
+    # ========================================================
+    # GEMINI STREAMING
+    # ========================================================
 
     def generate():
 
@@ -380,50 +467,30 @@ Relevant PDF content:
 
         try:
 
-            response = requests.post(
-                OLLAMA_URL,
-                json={
-                    "model": "llama3.2:3b",
-                    "prompt": prompt,
-                    "stream": True
-                },
-                stream=True,
-                timeout=300
+            response_stream = gemini_client.models.generate_content_stream(
+                model=GEMINI_MODEL,
+                contents=prompt
             )
 
-            response.raise_for_status()
+            for chunk in response_stream:
 
-            for line in response.iter_lines():
-
-                if not line:
-                    continue
-
-                data = json.loads(
-                    line.decode("utf-8")
+                text = getattr(
+                    chunk,
+                    "text",
+                    None
                 )
 
-                chunk = data.get(
-                    "response",
-                    ""
-                )
+                if text:
 
-                if chunk:
+                    full_reply += text
 
-                    full_reply += chunk
+                    yield text
 
-                    yield chunk
+            # ------------------------------------------------
+            # SAVE AI RESPONSE
+            # ------------------------------------------------
 
-                if data.get(
-                    "done",
-                    False
-                ):
-                    break
-
-            # Save AI response
-            connection = sqlite3.connect(
-                DATABASE
-            )
-
+            connection = sqlite3.connect(DATABASE)
             cursor = connection.cursor()
 
             cursor.execute(
@@ -445,7 +512,7 @@ Relevant PDF content:
         except Exception as error:
 
             print(
-                "Streaming error:",
+                "Gemini streaming error:",
                 error
             )
 
@@ -457,14 +524,14 @@ Relevant PDF content:
     )
 
 
-# ---------------- GET CHATS ----------------
+# ============================================================
+# GET CHATS
+# ============================================================
 
 @app.get("/chats")
 def get_chats():
 
-    connection = sqlite3.connect(
-        DATABASE
-    )
+    connection = sqlite3.connect(DATABASE)
 
     cursor = connection.cursor()
 
@@ -489,14 +556,14 @@ def get_chats():
     ]
 
 
-# ---------------- GET MESSAGES ----------------
+# ============================================================
+# GET MESSAGES
+# ============================================================
 
 @app.get("/messages")
 def get_messages(chat_id: str):
 
-    connection = sqlite3.connect(
-        DATABASE
-    )
+    connection = sqlite3.connect(DATABASE)
 
     cursor = connection.cursor()
 
@@ -523,17 +590,18 @@ def get_messages(chat_id: str):
     ]
 
 
-# ---------------- DELETE CHAT ----------------
+# ============================================================
+# DELETE CHAT
+# ============================================================
 
 @app.delete("/chat/{chat_id}")
 def delete_chat(chat_id: str):
 
-    connection = sqlite3.connect(
-        DATABASE
-    )
+    connection = sqlite3.connect(DATABASE)
 
     cursor = connection.cursor()
 
+    # Delete messages
     cursor.execute(
         """
         DELETE FROM messages
@@ -542,6 +610,7 @@ def delete_chat(chat_id: str):
         (chat_id,)
     )
 
+    # Delete documents
     cursor.execute(
         """
         DELETE FROM documents
@@ -550,6 +619,7 @@ def delete_chat(chat_id: str):
         (chat_id,)
     )
 
+    # Delete chat
     cursor.execute(
         """
         DELETE FROM chats
@@ -564,3 +634,4 @@ def delete_chat(chat_id: str):
     return {
         "message": "Chat deleted!"
     }
+
