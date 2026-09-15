@@ -385,194 +385,48 @@ async function deleteChat(chatId) {
 // ============================================================
 
 async function sendMessage() {
-    if (!messageInput) return;
+    const message = messageInput.value.trim();
 
-    const message =
-        messageInput.value.trim();
+    if (!message || !currentChatId) return;
 
-    if (!message || isGenerating) {
-        return;
-    }
-
-    // Create chat automatically if needed
-    if (!currentChatId) {
-        const newChatId =
-            await createNewChat();
-
-        if (!newChatId) {
-            return;
-        }
-    }
-
-    // Remove welcome screen
-    if (chat) {
-        const welcome =
-            chat.querySelector(".welcome");
-
-        if (welcome) {
-            welcome.remove();
-        }
-    }
-
-    // Show user message
     addMessage(message, "user");
-
     messageInput.value = "";
 
-    // Create AI message container
-    const aiMessage =
-        addMessage("", "ai");
-
-    if (!aiMessage) return;
-
-    aiMessage.textContent = "Thinking...";
-
-    // UI state
-    isGenerating = true;
-
-    if (sendButton) {
-        sendButton.disabled = true;
-    }
-
-    if (stopButton) {
-        stopButton.style.display = "inline-block";
-    }
-
-    if (newChatButton) {
-        newChatButton.disabled = true;
-    }
-
-    currentController =
-        new AbortController();
+    const aiMessage = addMessage("Thinking...", "ai");
 
     try {
-        const url =
-            `${API}/chat` +
-            `?chat_id=${encodeURIComponent(currentChatId)}` +
-            `&message=${encodeURIComponent(message)}`;
+        console.log("Sending to:", `${API}/chat`);
 
-        console.log("Sending message to:", url);
-
-        const response =
-            await fetch(url, {
-                method: "POST",
-                signal: currentController.signal
-            });
-
-        if (!response.ok) {
-            const errorText =
-                await response.text();
-
-            throw new Error(
-                `HTTP ${response.status}: ${errorText}`
-            );
-        }
-
-        if (!response.body) {
-            throw new Error(
-                "Server returned an empty response."
-            );
-        }
-
-        const reader =
-            response.body.getReader();
-
-        const decoder =
-            new TextDecoder("utf-8");
-
-        let fullReply = "";
-
-        aiMessage.innerHTML = "";
-
-        while (true) {
-            const {
-                done,
-                value
-            } = await reader.read();
-
-            if (done) break;
-
-            const chunk =
-                decoder.decode(
-                    value,
-                    { stream: true }
-                );
-
-            fullReply += chunk;
-
-            renderMarkdown(
-                aiMessage,
-                fullReply
-            );
-
-            if (chat) {
-                chat.scrollTop =
-                    chat.scrollHeight;
+        const response = await fetch(
+            `${API}/chat?chat_id=${encodeURIComponent(currentChatId)}&message=${encodeURIComponent(message)}`,
+            {
+                method: "POST"
             }
-        }
-
-        // Decode remaining bytes
-        const remaining =
-            decoder.decode();
-
-        if (remaining) {
-            fullReply += remaining;
-        }
-
-        renderMarkdown(
-            aiMessage,
-            fullReply
         );
 
-        if (!fullReply.trim()) {
-            aiMessage.textContent =
-                "The AI returned an empty response.";
+        console.log("Response status:", response.status);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Server error ${response.status}: ${errorText}`);
         }
 
-        // Refresh chat titles
-        await loadChats();
+        // Get the complete response instead of browser streaming
+        const reply = await response.text();
+
+        console.log("AI reply:", reply);
+
+        if (!reply.trim()) {
+            throw new Error("Empty response from AI server");
+        }
+
+        aiMessage.innerHTML = renderMarkdown(reply);
 
     } catch (error) {
+        console.error("AI ERROR:", error);
 
-        if (error.name === "AbortError") {
-
-            if (!aiMessage.textContent.trim()) {
-                aiMessage.textContent =
-                    "Generation stopped.";
-            }
-
-        } else {
-
-            console.error(
-                "SEND ERROR:",
-                error
-            );
-
-            aiMessage.innerHTML =
-                `<strong>Error</strong><br>` +
-                escapeHtml(error.message);
-        }
-
-    } finally {
-
-        isGenerating = false;
-        currentController = null;
-
-        if (sendButton) {
-            sendButton.disabled = false;
-        }
-
-        if (stopButton) {
-            stopButton.style.display = "none";
-        }
-
-        if (newChatButton) {
-            newChatButton.disabled = false;
-        }
-
-        if (messageInput) {
-            messageInput.focus();
-        }
+        aiMessage.innerHTML =
+            `<span style="color:red;">AI server error: ${error.message}</span>`;
     }
 }
 
