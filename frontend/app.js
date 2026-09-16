@@ -420,7 +420,7 @@ async function sendMessage() {
             throw new Error("Empty response from AI server");
         }
 
-        aiMessage.innerHTML = renderMarkdown(reply);
+        addMessage(reply, "ai");;
 
     } catch (error) {
         console.error("AI ERROR:", error);
