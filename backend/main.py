@@ -27,6 +27,7 @@ app = FastAPI(
 # ============================================================
 
 ALLOWED_ORIGINS = [
+    "https://answerlyabhi.abhinaybannuru.workers.dev",
     "https://answerlyabhi.com",
     "https://www.answerlyabhi.com",
     "https://answerlyabhi.onrender.com",
