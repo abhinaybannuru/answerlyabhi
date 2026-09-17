@@ -27,15 +27,21 @@ app = FastAPI(
 # ============================================================
 
 ALLOWED_ORIGINS = [
+    # Cloudflare Workers frontend
     "https://answerlyabhi.abhinaybannuru.workers.dev",
+
+    # Custom domain
     "https://answerlyabhi.com",
     "https://www.answerlyabhi.com",
+
+    # Render
     "https://answerlyabhi.onrender.com",
 
     # Local development
     "http://localhost:5500",
     "http://127.0.0.1:5500",
 ]
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,7 +67,7 @@ gemini_client = (
     else None
 )
 
-# Stable Gemini model
+# Keep your configured model
 GEMINI_MODEL = "gemini-3.6-flash"
 
 DATABASE = "chat_history.db"
@@ -72,13 +78,11 @@ DATABASE = "chat_history.db"
 # ============================================================
 
 def get_connection():
-    connection = sqlite3.connect(
+    return sqlite3.connect(
         DATABASE,
         timeout=30,
         check_same_thread=False
     )
-
-    return connection
 
 
 def init_database():
@@ -119,7 +123,7 @@ init_database()
 
 
 # ============================================================
-# HEALTH CHECK
+# HEALTH
 # ============================================================
 
 @app.get("/")
@@ -138,7 +142,8 @@ def health():
     return {
         "status": "ok",
         "service": "AnswerlyAbhi",
-        "gemini_configured": gemini_client is not None
+        "gemini_configured": gemini_client is not None,
+        "model": GEMINI_MODEL
     }
 
 
@@ -226,7 +231,6 @@ async def upload_pdf(
 
         file_bytes = await file.read()
 
-        # 15 MB safety limit
         if len(file_bytes) > 15 * 1024 * 1024:
             raise HTTPException(
                 status_code=413,
@@ -293,11 +297,12 @@ async def upload_pdf(
 
     except Exception as error:
 
-        print("PDF error:", error)
+        print("PDF error:", repr(error))
 
-        return {
-            "error": "Failed to process PDF."
-        }
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to process PDF."
+        )
 
     finally:
 
@@ -392,11 +397,9 @@ def get_relevant_pdf_text(chat_id, question):
     if not best_chunks:
         best_chunks = chunks[:2]
 
-    pdf_context = "\n\n".join(best_chunks)
-
     return {
         "filename": filename,
-        "content": pdf_context
+        "content": "\n\n".join(best_chunks)
     }
 
 
@@ -446,7 +449,6 @@ PDF rules:
 Conversation:
 """
 
-    # Limit enormous history
     recent_messages = messages[-40:]
 
     for role, content in recent_messages:
@@ -582,7 +584,7 @@ def chat(chat_id: str, message: str):
     )
 
     # --------------------------------------------------------
-    # STREAM GEMINI RESPONSE
+    # STREAM GEMINI
     # --------------------------------------------------------
 
     def generate():
@@ -590,6 +592,12 @@ def chat(chat_id: str, message: str):
         full_reply = ""
 
         try:
+
+            print(
+                f"Gemini request started | "
+                f"chat_id={chat_id} | "
+                f"model={GEMINI_MODEL}"
+            )
 
             response_stream = (
                 gemini_client.models.generate_content_stream(
@@ -613,7 +621,7 @@ def chat(chat_id: str, message: str):
                     yield text
 
             # ------------------------------------------------
-            # SAVE COMPLETE AI RESPONSE
+            # SAVE COMPLETE RESPONSE
             # ------------------------------------------------
 
             if full_reply.strip():
@@ -637,16 +645,32 @@ def chat(chat_id: str, message: str):
                 connection.commit()
                 connection.close()
 
-        except Exception as error:
-
             print(
-                "Gemini streaming error:",
-                repr(error)
+                f"Gemini request completed | "
+                f"characters={len(full_reply)}"
             )
 
+        except Exception as error:
+
+            # IMPORTANT:
+            # This prints the REAL Gemini error in Render logs.
+            print(
+                "=================================================="
+            )
+            print(
+                "GEMINI STREAMING ERROR"
+            )
+            print(
+                repr(error)
+            )
+            print(
+                "=================================================="
+            )
+
+            # Send a clear error to the frontend
             yield (
                 "\n\n[AnswerlyAbhi server error. "
-                "Please try again.]"
+                "Please check the backend logs.]"
             )
 
     return StreamingResponse(
