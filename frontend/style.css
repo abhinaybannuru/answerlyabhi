@@ -1872,3 +1872,91 @@ textarea:focus-visible {
     }
 
 }
+/* =========================================================
+   MOBILE KEYBOARD FIX
+   ========================================================= */
+
+@media (max-width: 768px) {
+
+    .input-area,
+    .composer-wrapper {
+
+        position: fixed !important;
+
+        left: 0;
+        right: 0;
+        bottom: 0;
+
+        width: 100%;
+
+        z-index: 1000;
+
+        transition: transform 0.15s ease-out;
+
+        padding-bottom:
+            max(10px, env(safe-area-inset-bottom));
+    }
+
+
+    .main {
+
+        min-height: 100dvh;
+
+        height: 100dvh;
+    }
+
+
+    #chat,
+    .chat {
+
+        height: auto;
+
+        min-height: 0;
+
+        overflow-y: auto;
+
+        padding-bottom: 140px;
+    }
+
+
+    #message {
+
+        max-height: 120px;
+
+        overflow-y: auto;
+
+        font-size: 16px;
+    }
+}
+
+
+/* Extra-small phones */
+
+@media (max-width: 480px) {
+
+    .input-area,
+    .composer-wrapper {
+
+        padding-left: 10px;
+        padding-right: 10px;
+
+        padding-top: 8px;
+    }
+
+
+    #message {
+
+        min-height: 44px;
+
+        font-size: 16px;
+    }
+
+
+    #send,
+    #stop {
+
+        min-width: 48px;
+
+        min-height: 44px;
+    }
+}

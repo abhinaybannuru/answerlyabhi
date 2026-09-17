@@ -1884,10 +1884,13 @@ async function startApp() {
     }
 
 
-    if (messageInput) {
+    if (
+    messageInput &&
+    window.innerWidth > 768
+) {
 
-        messageInput.focus();
-    }
+    messageInput.focus();
+}
 }
 
 
@@ -1896,3 +1899,70 @@ async function startApp() {
    ========================================================= */
 
 startApp();
+/* =========================================================
+   MOBILE KEYBOARD / VIEWPORT FIX
+   Keeps the message box above the mobile keyboard
+   ========================================================= */
+
+function setupMobileKeyboardFix() {
+
+    if (!window.visualViewport) {
+        return;
+    }
+
+    const viewport = window.visualViewport;
+
+    function updateKeyboardPosition() {
+
+        const composer =
+            document.querySelector(".input-area") ||
+            document.querySelector(".composer-wrapper");
+
+        if (!composer) {
+            return;
+        }
+
+        const keyboardHeight =
+            Math.max(
+                0,
+                window.innerHeight - viewport.height - viewport.offsetTop
+            );
+
+        if (window.innerWidth <= 768) {
+
+            composer.style.transform =
+                `translateY(-${keyboardHeight}px)`;
+
+        } else {
+
+            composer.style.transform =
+                "translateY(0)";
+        }
+
+        requestAnimationFrame(() => {
+            scrollToBottom();
+        });
+    }
+
+    viewport.addEventListener(
+        "resize",
+        updateKeyboardPosition
+    );
+
+    viewport.addEventListener(
+        "scroll",
+        updateKeyboardPosition
+    );
+
+    window.addEventListener(
+        "resize",
+        updateKeyboardPosition
+    );
+
+    updateKeyboardPosition();
+}
+
+
+/* Start mobile keyboard fix */
+
+setupMobileKeyboardFix();
