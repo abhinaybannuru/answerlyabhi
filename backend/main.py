@@ -1,13 +1,12 @@
-
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 import sqlite3
 import uuid
-import json
 import re
 import os
+import tempfile
 
 from pypdf import PdfReader
 from google import genai
@@ -17,13 +16,30 @@ from google import genai
 # APP
 # ============================================================
 
-app = FastAPI()
+app = FastAPI(
+    title="AnswerlyAbhi API",
+    version="1.0.0"
+)
 
+
+# ============================================================
+# CORS
+# ============================================================
+
+ALLOWED_ORIGINS = [
+    "https://answerlyabhi.com",
+    "https://www.answerlyabhi.com",
+    "https://answerlyabhi.onrender.com",
+
+    # Local development
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -33,8 +49,18 @@ app.add_middleware(
 # GEMINI
 # ============================================================
 
-gemini_client = genai.Client()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+if not GEMINI_API_KEY:
+    print("WARNING: GEMINI_API_KEY is not configured.")
+
+gemini_client = (
+    genai.Client(api_key=GEMINI_API_KEY)
+    if GEMINI_API_KEY
+    else None
+)
+
+# Stable Gemini model
 GEMINI_MODEL = "gemini-3.6-flash"
 
 DATABASE = "chat_history.db"
@@ -44,9 +70,19 @@ DATABASE = "chat_history.db"
 # DATABASE
 # ============================================================
 
+def get_connection():
+    connection = sqlite3.connect(
+        DATABASE,
+        timeout=30,
+        check_same_thread=False
+    )
+
+    return connection
+
+
 def init_database():
 
-    connection = sqlite3.connect(DATABASE)
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute("""
@@ -82,14 +118,26 @@ init_database()
 
 
 # ============================================================
-# HOME
+# HEALTH CHECK
 # ============================================================
 
 @app.get("/")
 def home():
 
     return {
-        "message": "AnswerlyAbhi AI is running!"
+        "service": "AnswerlyAbhi AI",
+        "status": "running",
+        "model": GEMINI_MODEL
+    }
+
+
+@app.get("/health")
+def health():
+
+    return {
+        "status": "ok",
+        "service": "AnswerlyAbhi",
+        "gemini_configured": gemini_client is not None
     }
 
 
@@ -102,11 +150,14 @@ def new_chat():
 
     chat_id = str(uuid.uuid4())
 
-    connection = sqlite3.connect(DATABASE)
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute(
-        "INSERT INTO chats (id, title) VALUES (?, ?)",
+        """
+        INSERT INTO chats (id, title)
+        VALUES (?, ?)
+        """,
         (chat_id, "New Chat")
     )
 
@@ -120,6 +171,27 @@ def new_chat():
 
 
 # ============================================================
+# CHECK CHAT
+# ============================================================
+
+def chat_exists(chat_id):
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        "SELECT id FROM chats WHERE id = ?",
+        (chat_id,)
+    )
+
+    result = cursor.fetchone()
+
+    connection.close()
+
+    return result is not None
+
+
+# ============================================================
 # PDF UPLOAD
 # ============================================================
 
@@ -129,11 +201,23 @@ async def upload_pdf(
     file: UploadFile = File(...)
 ):
 
-    if not file.filename.lower().endswith(".pdf"):
+    if not chat_exists(chat_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Chat not found."
+        )
 
-        return {
-            "error": "Please upload a PDF file."
-        }
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="No file selected."
+        )
+
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail="Please upload a PDF file."
+        )
 
     temp_filename = None
 
@@ -141,13 +225,21 @@ async def upload_pdf(
 
         file_bytes = await file.read()
 
-        # Temporary PDF filename
-        temp_filename = f"temp_{uuid.uuid4()}.pdf"
+        # 15 MB safety limit
+        if len(file_bytes) > 15 * 1024 * 1024:
+            raise HTTPException(
+                status_code=413,
+                detail="PDF is too large. Maximum size is 15 MB."
+            )
 
-        with open(temp_filename, "wb") as pdf_file:
-            pdf_file.write(file_bytes)
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".pdf"
+        ) as temp_file:
 
-        # Extract PDF text
+            temp_filename = temp_file.name
+            temp_file.write(file_bytes)
+
         reader = PdfReader(temp_filename)
 
         extracted_text = ""
@@ -159,20 +251,15 @@ async def upload_pdf(
             if page_text:
                 extracted_text += page_text + "\n"
 
-        # Delete temporary PDF
-        os.remove(temp_filename)
-        temp_filename = None
-
         if not extracted_text.strip():
 
             return {
                 "error": "Could not extract text from this PDF."
             }
 
-        # Store document
         document_id = str(uuid.uuid4())
 
-        connection = sqlite3.connect(DATABASE)
+        connection = get_connection()
         cursor = connection.cursor()
 
         cursor.execute(
@@ -200,20 +287,25 @@ async def upload_pdf(
             "characters": len(extracted_text)
         }
 
+    except HTTPException:
+        raise
+
     except Exception as error:
 
         print("PDF error:", error)
+
+        return {
+            "error": "Failed to process PDF."
+        }
+
+    finally:
 
         if temp_filename and os.path.exists(temp_filename):
 
             try:
                 os.remove(temp_filename)
-            except:
+            except Exception:
                 pass
-
-        return {
-            "error": "Failed to process PDF."
-        }
 
 
 # ============================================================
@@ -222,7 +314,7 @@ async def upload_pdf(
 
 def get_relevant_pdf_text(chat_id, question):
 
-    connection = sqlite3.connect(DATABASE)
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute(
@@ -245,7 +337,6 @@ def get_relevant_pdf_text(chat_id, question):
 
     filename, content = document
 
-    # Split PDF into chunks
     words = content.split()
 
     chunks = []
@@ -260,7 +351,6 @@ def get_relevant_pdf_text(chat_id, question):
 
         chunks.append(chunk)
 
-    # Extract useful words from question
     question_words = set(
         re.findall(
             r"\b[a-zA-Z0-9]{3,}\b",
@@ -292,7 +382,6 @@ def get_relevant_pdf_text(chat_id, question):
         reverse=True
     )
 
-    # Select best chunks
     best_chunks = [
         chunk
         for score, chunk in scored_chunks[:4]
@@ -300,7 +389,6 @@ def get_relevant_pdf_text(chat_id, question):
     ]
 
     if not best_chunks:
-
         best_chunks = chunks[:2]
 
     pdf_context = "\n\n".join(best_chunks)
@@ -312,64 +400,13 @@ def get_relevant_pdf_text(chat_id, question):
 
 
 # ============================================================
-# CHAT
+# BUILD PROMPT
 # ============================================================
 
-@app.post("/chat")
-def chat(chat_id: str, message: str):
+def build_prompt(chat_id, message):
 
-    connection = sqlite3.connect(DATABASE)
+    connection = get_connection()
     cursor = connection.cursor()
-
-    # --------------------------------------------------------
-    # SAVE USER MESSAGE
-    # --------------------------------------------------------
-
-    cursor.execute(
-        """
-        INSERT INTO messages
-        (chat_id, role, content)
-        VALUES (?, ?, ?)
-        """,
-        (
-            chat_id,
-            "user",
-            message
-        )
-    )
-
-    # --------------------------------------------------------
-    # UPDATE CHAT TITLE
-    # --------------------------------------------------------
-
-    cursor.execute(
-        "SELECT title FROM chats WHERE id = ?",
-        (chat_id,)
-    )
-
-    chat_data = cursor.fetchone()
-
-    if chat_data and chat_data[0] == "New Chat":
-
-        title = message[:40]
-
-        cursor.execute(
-            """
-            UPDATE chats
-            SET title = ?
-            WHERE id = ?
-            """,
-            (
-                title,
-                chat_id
-            )
-        )
-
-    connection.commit()
-
-    # --------------------------------------------------------
-    # GET CONVERSATION HISTORY
-    # --------------------------------------------------------
 
     cursor.execute(
         """
@@ -385,59 +422,54 @@ def chat(chat_id: str, message: str):
 
     connection.close()
 
-    # --------------------------------------------------------
-    # CHECK PDF
-    # --------------------------------------------------------
+    prompt = """
+You are AnswerlyAbhi, a helpful personal AI assistant.
+
+Your job is to answer clearly, naturally, accurately, and helpfully.
+
+Important behavior:
+- Be concise when the question is simple.
+- Give detailed explanations when needed.
+- Use markdown when useful.
+- For programming questions, provide clean code.
+- Do not invent facts.
+- If you are uncertain, say so.
+
+PDF rules:
+- If relevant PDF information is provided, use it.
+- Do not invent information from the PDF.
+- If the user asks specifically about the PDF and the answer
+  cannot be found in the provided PDF context, clearly say
+  that the information is not available in the uploaded PDF.
+
+Conversation:
+"""
+
+    # Limit enormous history
+    recent_messages = messages[-40:]
+
+    for role, content in recent_messages:
+
+        if role == "user":
+
+            prompt += (
+                "\nUser: "
+                + content
+                + "\n"
+            )
+
+        elif role == "assistant":
+
+            prompt += (
+                "\nAssistant: "
+                + content
+                + "\n"
+            )
 
     pdf_data = get_relevant_pdf_text(
         chat_id,
         message
     )
-
-    # --------------------------------------------------------
-    # CREATE PROMPT
-    # --------------------------------------------------------
-
-    prompt = """
-You are AnswerlyAbhi, a helpful personal AI assistant.
-
-Answer clearly, naturally, and accurately.
-
-If a PDF context is provided, use it when relevant.
-
-IMPORTANT PDF RULES:
-- Use the PDF information when relevant.
-- Do not invent information that is not in the PDF.
-- If the user asks something specifically about the PDF and
-  the answer cannot be found in the provided PDF context,
-  say that the information is not available in the uploaded PDF.
-- You can still answer normal questions when no PDF
-  information is relevant.
-
-Conversation:
-"""
-
-    for role, content in messages:
-
-        if role == "user":
-
-            prompt += (
-                "User: "
-                + content
-                + "\n"
-            )
-
-        else:
-
-            prompt += (
-                "Assistant: "
-                + content
-                + "\n"
-            )
-
-    # --------------------------------------------------------
-    # ADD PDF CONTEXT
-    # --------------------------------------------------------
 
     if pdf_data:
 
@@ -457,9 +489,100 @@ Relevant PDF content:
 
     prompt += "\nAssistant:"
 
-    # ========================================================
-    # GEMINI STREAMING
-    # ========================================================
+    return prompt
+
+
+# ============================================================
+# CHAT STREAMING
+# ============================================================
+
+@app.post("/chat")
+def chat(chat_id: str, message: str):
+
+    if not message.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Message cannot be empty."
+        )
+
+    if not chat_exists(chat_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Chat not found."
+        )
+
+    if gemini_client is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Gemini API key is not configured."
+        )
+
+    # --------------------------------------------------------
+    # SAVE USER MESSAGE
+    # --------------------------------------------------------
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO messages
+        (chat_id, role, content)
+        VALUES (?, ?, ?)
+        """,
+        (
+            chat_id,
+            "user",
+            message
+        )
+    )
+
+    # --------------------------------------------------------
+    # UPDATE CHAT TITLE
+    # --------------------------------------------------------
+
+    cursor.execute(
+        """
+        SELECT title
+        FROM chats
+        WHERE id = ?
+        """,
+        (chat_id,)
+    )
+
+    chat_data = cursor.fetchone()
+
+    if chat_data and chat_data[0] == "New Chat":
+
+        title = message.strip()[:40]
+
+        cursor.execute(
+            """
+            UPDATE chats
+            SET title = ?
+            WHERE id = ?
+            """,
+            (
+                title,
+                chat_id
+            )
+        )
+
+    connection.commit()
+    connection.close()
+
+    # --------------------------------------------------------
+    # CREATE PROMPT
+    # --------------------------------------------------------
+
+    prompt = build_prompt(
+        chat_id,
+        message
+    )
+
+    # --------------------------------------------------------
+    # STREAM GEMINI RESPONSE
+    # --------------------------------------------------------
 
     def generate():
 
@@ -467,9 +590,11 @@ Relevant PDF content:
 
         try:
 
-            response_stream = gemini_client.models.generate_content_stream(
-                model=GEMINI_MODEL,
-                contents=prompt
+            response_stream = (
+                gemini_client.models.generate_content_stream(
+                    model=GEMINI_MODEL,
+                    contents=prompt
+                )
             )
 
             for chunk in response_stream:
@@ -487,40 +612,49 @@ Relevant PDF content:
                     yield text
 
             # ------------------------------------------------
-            # SAVE AI RESPONSE
+            # SAVE COMPLETE AI RESPONSE
             # ------------------------------------------------
 
-            connection = sqlite3.connect(DATABASE)
-            cursor = connection.cursor()
+            if full_reply.strip():
 
-            cursor.execute(
-                """
-                INSERT INTO messages
-                (chat_id, role, content)
-                VALUES (?, ?, ?)
-                """,
-                (
-                    chat_id,
-                    "assistant",
-                    full_reply
+                connection = get_connection()
+                cursor = connection.cursor()
+
+                cursor.execute(
+                    """
+                    INSERT INTO messages
+                    (chat_id, role, content)
+                    VALUES (?, ?, ?)
+                    """,
+                    (
+                        chat_id,
+                        "assistant",
+                        full_reply
+                    )
                 )
-            )
 
-            connection.commit()
-            connection.close()
+                connection.commit()
+                connection.close()
 
         except Exception as error:
 
             print(
                 "Gemini streaming error:",
-                error
+                repr(error)
             )
 
-            yield "\n[AI server error]"
+            yield (
+                "\n\n[AnswerlyAbhi server error. "
+                "Please try again.]"
+            )
 
     return StreamingResponse(
         generate(),
-        media_type="text/plain"
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no"
+        }
     )
 
 
@@ -531,8 +665,7 @@ Relevant PDF content:
 @app.get("/chats")
 def get_chats():
 
-    connection = sqlite3.connect(DATABASE)
-
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute(
@@ -563,8 +696,14 @@ def get_chats():
 @app.get("/messages")
 def get_messages(chat_id: str):
 
-    connection = sqlite3.connect(DATABASE)
+    if not chat_exists(chat_id):
 
+        raise HTTPException(
+            status_code=404,
+            detail="Chat not found."
+        )
+
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute(
@@ -597,11 +736,9 @@ def get_messages(chat_id: str):
 @app.delete("/chat/{chat_id}")
 def delete_chat(chat_id: str):
 
-    connection = sqlite3.connect(DATABASE)
-
+    connection = get_connection()
     cursor = connection.cursor()
 
-    # Delete messages
     cursor.execute(
         """
         DELETE FROM messages
@@ -610,7 +747,6 @@ def delete_chat(chat_id: str):
         (chat_id,)
     )
 
-    # Delete documents
     cursor.execute(
         """
         DELETE FROM documents
@@ -619,7 +755,6 @@ def delete_chat(chat_id: str):
         (chat_id,)
     )
 
-    # Delete chat
     cursor.execute(
         """
         DELETE FROM chats
@@ -634,4 +769,3 @@ def delete_chat(chat_id: str):
     return {
         "message": "Chat deleted!"
     }
-
