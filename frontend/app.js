@@ -25,6 +25,38 @@ let currentChatId = null;
 let currentController = null;
 let isGenerating = false;
 
+/* =========================================================
+   PRIVATE BROWSER / DEVICE USER ID
+   ========================================================= */
+
+function getUserId() {
+
+    let userId =
+        localStorage.getItem(
+            "answerlyabhi-user-id"
+        );
+
+    if (!userId) {
+
+        userId =
+            crypto.randomUUID();
+
+        localStorage.setItem(
+            "answerlyabhi-user-id",
+            userId
+        );
+    }
+
+    return userId;
+}
+
+const USER_ID = getUserId();
+
+console.log(
+    "AnswerlyAbhi User ID:",
+    USER_ID
+);
+
 
 /* =========================================================
    DOM ELEMENTS
@@ -502,7 +534,7 @@ async function createNewChat() {
 
         const response =
             await fetch(
-                `${API}/new-chat`,
+                `${API}/new-chat?user_id=${encodeURIComponent(USER_ID)}`,`${API}/new-chat`,
                 {
                     method: "POST"
                 }
@@ -576,7 +608,7 @@ async function loadChats() {
 
         const response =
             await fetch(
-                `${API}/chats`
+                `${API}/chats?user_id=${encodeURIComponent(USER_ID)}`
             );
 
         if (!response.ok) {
@@ -744,7 +776,7 @@ async function openChat(
 
         const response =
             await fetch(
-                `${API}/messages?chat_id=${encodeURIComponent(chatId)}`
+                `${API}/messages?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(chatId)}`
             );
 
         if (!response.ok) {
@@ -842,7 +874,7 @@ async function deleteChat(
 
         const response =
             await fetch(
-                `${API}/chat/${encodeURIComponent(chatId)}`,
+                `${API}/chat/${encodeURIComponent(chatId)}?user_id=${encodeURIComponent(USER_ID)}`,
                 {
                     method: "DELETE"
                 }
@@ -991,7 +1023,7 @@ async function sendMessage() {
 
         const response =
             await fetch(
-                `${API}/chat?chat_id=${encodeURIComponent(currentChatId)}&message=${encodeURIComponent(message)}`,
+                `${API}/chat?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(currentChatId)}&message=${encodeURIComponent(message)}`,
                 {
                     method: "POST",
                     signal:
@@ -1320,7 +1352,7 @@ async function uploadPDF() {
 
         const response =
             await fetch(
-                `${API}/upload-pdf?chat_id=${encodeURIComponent(currentChatId)}`,
+                `${API}/upload-pdf?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(currentChatId)}`,
                 {
                     method: "POST",
                     body: formData

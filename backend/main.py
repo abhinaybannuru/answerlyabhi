@@ -7,6 +7,7 @@ import uuid
 import re
 import os
 import tempfile
+import time
 
 from pypdf import PdfReader
 from google import genai
@@ -18,7 +19,7 @@ from google import genai
 
 app = FastAPI(
     title="AnswerlyAbhi API",
-    version="1.0.0"
+    version="2.0.0"
 )
 
 
@@ -27,21 +28,13 @@ app = FastAPI(
 # ============================================================
 
 ALLOWED_ORIGINS = [
-    # Cloudflare Workers frontend
     "https://answerlyabhi.abhinaybannuru.workers.dev",
-
-    # Custom domain
     "https://answerlyabhi.com",
     "https://www.answerlyabhi.com",
-
-    # Render
     "https://answerlyabhi.onrender.com",
-
-    # Local development
     "http://localhost:5500",
     "http://127.0.0.1:5500",
 ]
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,15 +60,15 @@ gemini_client = (
     else None
 )
 
-# Keep your configured model
 GEMINI_MODEL = "gemini-3.6-flash"
-
-DATABASE = "chat_history.db"
 
 
 # ============================================================
 # DATABASE
 # ============================================================
+
+DATABASE = "chat_history.db"
+
 
 def get_connection():
     return sqlite3.connect(
@@ -93,6 +86,7 @@ def init_database():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS chats (
             id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
             title TEXT NOT NULL
         )
     """)
@@ -110,16 +104,58 @@ def init_database():
         CREATE TABLE IF NOT EXISTS documents (
             id TEXT PRIMARY KEY,
             chat_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
             filename TEXT NOT NULL,
             content TEXT NOT NULL
         )
     """)
+
+    # --------------------------------------------------------
+    # DATABASE MIGRATION FOR OLD DATABASES
+    # --------------------------------------------------------
+
+    try:
+        cursor.execute(
+            "ALTER TABLE chats ADD COLUMN user_id TEXT"
+        )
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        cursor.execute(
+            "ALTER TABLE documents ADD COLUMN user_id TEXT"
+        )
+    except sqlite3.OperationalError:
+        pass
 
     connection.commit()
     connection.close()
 
 
 init_database()
+
+
+# ============================================================
+# VALIDATE USER ID
+# ============================================================
+
+def validate_user_id(user_id):
+
+    if not user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="User ID is required."
+        )
+
+    user_id = str(user_id).strip()
+
+    if len(user_id) < 10 or len(user_id) > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid user ID."
+        )
+
+    return user_id
 
 
 # ============================================================
@@ -132,7 +168,8 @@ def home():
     return {
         "service": "AnswerlyAbhi AI",
         "status": "running",
-        "model": GEMINI_MODEL
+        "model": GEMINI_MODEL,
+        "version": "2.0.0"
     }
 
 
@@ -143,7 +180,8 @@ def health():
         "status": "ok",
         "service": "AnswerlyAbhi",
         "gemini_configured": gemini_client is not None,
-        "model": GEMINI_MODEL
+        "model": GEMINI_MODEL,
+        "privacy": "browser-device"
     }
 
 
@@ -152,7 +190,9 @@ def health():
 # ============================================================
 
 @app.post("/new-chat")
-def new_chat():
+def new_chat(user_id: str):
+
+    user_id = validate_user_id(user_id)
 
     chat_id = str(uuid.uuid4())
 
@@ -161,10 +201,15 @@ def new_chat():
 
     cursor.execute(
         """
-        INSERT INTO chats (id, title)
-        VALUES (?, ?)
+        INSERT INTO chats
+        (id, user_id, title)
+        VALUES (?, ?, ?)
         """,
-        (chat_id, "New Chat")
+        (
+            chat_id,
+            user_id,
+            "New Chat"
+        )
     )
 
     connection.commit()
@@ -177,17 +222,25 @@ def new_chat():
 
 
 # ============================================================
-# CHECK CHAT
+# CHECK CHAT OWNERSHIP
 # ============================================================
 
-def chat_exists(chat_id):
+def chat_exists(chat_id, user_id):
 
     connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute(
-        "SELECT id FROM chats WHERE id = ?",
-        (chat_id,)
+        """
+        SELECT id
+        FROM chats
+        WHERE id = ?
+        AND user_id = ?
+        """,
+        (
+            chat_id,
+            user_id
+        )
     )
 
     result = cursor.fetchone()
@@ -203,11 +256,14 @@ def chat_exists(chat_id):
 
 @app.post("/upload-pdf")
 async def upload_pdf(
+    user_id: str,
     chat_id: str,
     file: UploadFile = File(...)
 ):
 
-    if not chat_exists(chat_id):
+    user_id = validate_user_id(user_id)
+
+    if not chat_exists(chat_id, user_id):
         raise HTTPException(
             status_code=404,
             detail="Chat not found."
@@ -270,12 +326,13 @@ async def upload_pdf(
         cursor.execute(
             """
             INSERT INTO documents
-            (id, chat_id, filename, content)
-            VALUES (?, ?, ?, ?)
+            (id, chat_id, user_id, filename, content)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 document_id,
                 chat_id,
+                user_id,
                 file.filename,
                 extracted_text
             )
@@ -318,7 +375,7 @@ async def upload_pdf(
 # PDF RETRIEVAL
 # ============================================================
 
-def get_relevant_pdf_text(chat_id, question):
+def get_relevant_pdf_text(chat_id, user_id, question):
 
     connection = get_connection()
     cursor = connection.cursor()
@@ -328,10 +385,14 @@ def get_relevant_pdf_text(chat_id, question):
         SELECT filename, content
         FROM documents
         WHERE chat_id = ?
+        AND user_id = ?
         ORDER BY rowid DESC
         LIMIT 1
         """,
-        (chat_id,)
+        (
+            chat_id,
+            user_id
+        )
     )
 
     document = cursor.fetchone()
@@ -349,7 +410,11 @@ def get_relevant_pdf_text(chat_id, question):
 
     chunk_size = 500
 
-    for i in range(0, len(words), chunk_size):
+    for i in range(
+        0,
+        len(words),
+        chunk_size
+    ):
 
         chunk = " ".join(
             words[i:i + chunk_size]
@@ -376,7 +441,9 @@ def get_relevant_pdf_text(chat_id, question):
         )
 
         score = len(
-            question_words.intersection(chunk_words)
+            question_words.intersection(
+                chunk_words
+            )
         )
 
         scored_chunks.append(
@@ -397,9 +464,16 @@ def get_relevant_pdf_text(chat_id, question):
     if not best_chunks:
         best_chunks = chunks[:2]
 
+    # Prevent extremely large PDF prompts
+    selected_content = "\n\n".join(
+        best_chunks
+    )
+
+    selected_content = selected_content[:12000]
+
     return {
         "filename": filename,
-        "content": "\n\n".join(best_chunks)
+        "content": selected_content
     }
 
 
@@ -407,7 +481,11 @@ def get_relevant_pdf_text(chat_id, question):
 # BUILD PROMPT
 # ============================================================
 
-def build_prompt(chat_id, message):
+def build_prompt(
+    chat_id,
+    user_id,
+    message
+):
 
     connection = get_connection()
     cursor = connection.cursor()
@@ -429,35 +507,37 @@ def build_prompt(chat_id, message):
     prompt = """
 You are AnswerlyAbhi, a helpful personal AI assistant.
 
-Your job is to answer clearly, naturally, accurately, and helpfully.
+Answer naturally, accurately, and helpfully.
 
 Important behavior:
-- Be concise when the question is simple.
-- Give detailed explanations when needed.
+- Answer simple questions concisely.
+- Give detailed answers when the user needs them.
+- Support follow-up questions using conversation context.
+- Do not lose context between questions.
 - Use markdown when useful.
 - For programming questions, provide clean code.
 - Do not invent facts.
-- If you are uncertain, say so.
-
-PDF rules:
-- If relevant PDF information is provided, use it.
-- Do not invent information from the PDF.
-- If the user asks specifically about the PDF and the answer
-  cannot be found in the provided PDF context, clearly say
-  that the information is not available in the uploaded PDF.
+- If uncertain, clearly say so.
 
 Conversation:
 """
 
-    recent_messages = messages[-40:]
+    # --------------------------------------------------------
+    # Keep enough history for multi-question conversations
+    # --------------------------------------------------------
+
+    recent_messages = messages[-20:]
 
     for role, content in recent_messages:
+
+        # Protect prompt size
+        safe_content = str(content)[:6000]
 
         if role == "user":
 
             prompt += (
                 "\nUser: "
-                + content
+                + safe_content
                 + "\n"
             )
 
@@ -465,12 +545,17 @@ Conversation:
 
             prompt += (
                 "\nAssistant: "
-                + content
+                + safe_content
                 + "\n"
             )
 
+    # --------------------------------------------------------
+    # PDF CONTEXT
+    # --------------------------------------------------------
+
     pdf_data = get_relevant_pdf_text(
         chat_id,
+        user_id,
         message
     )
 
@@ -496,28 +581,81 @@ Relevant PDF content:
 
 
 # ============================================================
+# SAVE ASSISTANT RESPONSE
+# ============================================================
+
+def save_assistant_message(
+    chat_id,
+    user_id,
+    content
+):
+
+    if not content.strip():
+        return
+
+    if not chat_exists(
+        chat_id,
+        user_id
+    ):
+        return
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO messages
+        (chat_id, role, content)
+        VALUES (?, ?, ?)
+        """,
+        (
+            chat_id,
+            "assistant",
+            content
+        )
+    )
+
+    connection.commit()
+    connection.close()
+
+
+# ============================================================
 # CHAT STREAMING
 # ============================================================
 
 @app.post("/chat")
-def chat(chat_id: str, message: str):
+def chat(
+    user_id: str,
+    chat_id: str,
+    message: str
+):
 
-    if not message.strip():
+    user_id = validate_user_id(user_id)
+
+    message = message.strip()
+
+    if not message:
+
         raise HTTPException(
             status_code=400,
             detail="Message cannot be empty."
         )
 
-    if not chat_exists(chat_id):
+    if not chat_exists(
+        chat_id,
+        user_id
+    ):
+
         raise HTTPException(
             status_code=404,
             detail="Chat not found."
         )
 
     if gemini_client is None:
+
         raise HTTPException(
             status_code=500,
-            detail="Gemini API key is not configured."
+            detail="Gemini service is not configured."
         )
 
     # --------------------------------------------------------
@@ -541,7 +679,7 @@ def chat(chat_id: str, message: str):
     )
 
     # --------------------------------------------------------
-    # UPDATE CHAT TITLE
+    # UPDATE TITLE
     # --------------------------------------------------------
 
     cursor.execute(
@@ -549,25 +687,34 @@ def chat(chat_id: str, message: str):
         SELECT title
         FROM chats
         WHERE id = ?
+        AND user_id = ?
         """,
-        (chat_id,)
+        (
+            chat_id,
+            user_id
+        )
     )
 
     chat_data = cursor.fetchone()
 
-    if chat_data and chat_data[0] == "New Chat":
+    if (
+        chat_data
+        and chat_data[0] == "New Chat"
+    ):
 
-        title = message.strip()[:40]
+        title = message[:40]
 
         cursor.execute(
             """
             UPDATE chats
             SET title = ?
             WHERE id = ?
+            AND user_id = ?
             """,
             (
                 title,
-                chat_id
+                chat_id,
+                user_id
             )
         )
 
@@ -575,27 +722,30 @@ def chat(chat_id: str, message: str):
     connection.close()
 
     # --------------------------------------------------------
-    # CREATE PROMPT
+    # BUILD PROMPT
     # --------------------------------------------------------
 
     prompt = build_prompt(
         chat_id,
+        user_id,
         message
     )
 
     # --------------------------------------------------------
-    # STREAM GEMINI
+    # GEMINI STREAM
     # --------------------------------------------------------
 
     def generate():
 
         full_reply = ""
+        successful_stream = False
 
         try:
 
             print(
                 f"Gemini request started | "
-                f"chat_id={chat_id} | "
+                f"user={user_id[:8]} | "
+                f"chat={chat_id[:8]} | "
                 f"model={GEMINI_MODEL}"
             )
 
@@ -616,44 +766,37 @@ def chat(chat_id: str, message: str):
 
                 if text:
 
+                    successful_stream = True
                     full_reply += text
 
                     yield text
 
-            # ------------------------------------------------
-            # SAVE COMPLETE RESPONSE
-            # ------------------------------------------------
-
             if full_reply.strip():
 
-                connection = get_connection()
-                cursor = connection.cursor()
-
-                cursor.execute(
-                    """
-                    INSERT INTO messages
-                    (chat_id, role, content)
-                    VALUES (?, ?, ?)
-                    """,
-                    (
-                        chat_id,
-                        "assistant",
-                        full_reply
-                    )
+                save_assistant_message(
+                    chat_id,
+                    user_id,
+                    full_reply
                 )
 
-                connection.commit()
-                connection.close()
+                print(
+                    "Gemini request completed | "
+                    f"characters={len(full_reply)}"
+                )
 
-            print(
-                f"Gemini request completed | "
-                f"characters={len(full_reply)}"
-            )
+            else:
+
+                print(
+                    "Gemini returned an empty response."
+                )
+
+                yield (
+                    "I didn't receive a response from "
+                    "Gemini. Please try your question again."
+                )
 
         except Exception as error:
 
-            # IMPORTANT:
-            # This prints the REAL Gemini error in Render logs.
             print(
                 "=================================================="
             )
@@ -667,11 +810,30 @@ def chat(chat_id: str, message: str):
                 "=================================================="
             )
 
-            # Send a clear error to the frontend
-            yield (
-                "\n\n[AnswerlyAbhi server error. "
-                "Please check the backend logs.]"
-            )
+            # ------------------------------------------------
+            # If some response already arrived, preserve it.
+            # ------------------------------------------------
+
+            if full_reply.strip():
+
+                save_assistant_message(
+                    chat_id,
+                    user_id,
+                    full_reply
+                )
+
+                yield (
+                    "\n\n*The response was interrupted. "
+                    "Please ask me to continue.*"
+                )
+
+            else:
+
+                # No ugly server error shown to the user.
+                yield (
+                    "I couldn't complete that response right now. "
+                    "Please try again in a moment."
+                )
 
     return StreamingResponse(
         generate(),
@@ -688,7 +850,9 @@ def chat(chat_id: str, message: str):
 # ============================================================
 
 @app.get("/chats")
-def get_chats():
+def get_chats(user_id: str):
+
+    user_id = validate_user_id(user_id)
 
     connection = get_connection()
     cursor = connection.cursor()
@@ -697,8 +861,10 @@ def get_chats():
         """
         SELECT id, title
         FROM chats
+        WHERE user_id = ?
         ORDER BY rowid DESC
-        """
+        """,
+        (user_id,)
     )
 
     chats = cursor.fetchall()
@@ -719,9 +885,17 @@ def get_chats():
 # ============================================================
 
 @app.get("/messages")
-def get_messages(chat_id: str):
+def get_messages(
+    user_id: str,
+    chat_id: str
+):
 
-    if not chat_exists(chat_id):
+    user_id = validate_user_id(user_id)
+
+    if not chat_exists(
+        chat_id,
+        user_id
+    ):
 
         raise HTTPException(
             status_code=404,
@@ -759,7 +933,22 @@ def get_messages(chat_id: str):
 # ============================================================
 
 @app.delete("/chat/{chat_id}")
-def delete_chat(chat_id: str):
+def delete_chat(
+    chat_id: str,
+    user_id: str
+):
+
+    user_id = validate_user_id(user_id)
+
+    if not chat_exists(
+        chat_id,
+        user_id
+    ):
+
+        raise HTTPException(
+            status_code=404,
+            detail="Chat not found."
+        )
 
     connection = get_connection()
     cursor = connection.cursor()
@@ -776,16 +965,24 @@ def delete_chat(chat_id: str):
         """
         DELETE FROM documents
         WHERE chat_id = ?
+        AND user_id = ?
         """,
-        (chat_id,)
+        (
+            chat_id,
+            user_id
+        )
     )
 
     cursor.execute(
         """
         DELETE FROM chats
         WHERE id = ?
+        AND user_id = ?
         """,
-        (chat_id,)
+        (
+            chat_id,
+            user_id
+        )
     )
 
     connection.commit()
