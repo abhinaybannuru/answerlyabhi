@@ -1,14 +1,10 @@
-"use strict";
+// ============================================================
+// AnswerlyAbhi - Frontend JavaScript
+// ============================================================
 
-/* =========================================================
-   ANSWERLYABHI
-   Gemini Streaming Frontend
-   ========================================================= */
-
-
-/* =========================================================
-   BACKEND URL
-   ========================================================= */
+// =========================
+// API
+// =========================
 
 const API =
     window.location.hostname === "localhost" ||
@@ -17,17 +13,9 @@ const API =
         : "https://answerlyabhi.onrender.com";
 
 
-/* =========================================================
-   APPLICATION STATE
-   ========================================================= */
-
-let currentChatId = null;
-let currentController = null;
-let isGenerating = false;
-
-/* =========================================================
-   PRIVATE BROWSER / DEVICE USER ID
-   ========================================================= */
+// =========================
+// PRIVATE USER ID
+// =========================
 
 function getUserId() {
     let userId = localStorage.getItem("answerlyabhi-user-id");
@@ -36,7 +24,10 @@ function getUserId() {
         userId =
             typeof crypto !== "undefined" && crypto.randomUUID
                 ? crypto.randomUUID()
-                : "user-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+                : "user-" +
+                  Date.now() +
+                  "-" +
+                  Math.random().toString(36).slice(2);
 
         localStorage.setItem("answerlyabhi-user-id", userId);
     }
@@ -47,475 +38,295 @@ function getUserId() {
 const USER_ID = getUserId();
 
 
-/* =========================================================
-   DOM ELEMENTS
-   ========================================================= */
+// =========================
+// STATE
+// =========================
 
-const messageInput =
-    document.getElementById("message");
-
-const sendButton =
-    document.getElementById("send");
-
-const stopButton =
-    document.getElementById("stop");
-
-const chat =
-    document.getElementById("chat");
-
-const newChatButton =
-    document.getElementById("new-chat");
-
-const chatList =
-    document.getElementById("chat-list");
-
-const pdfInput =
-    document.getElementById("pdf");
-
-const sidebar =
-    document.getElementById("sidebar");
-
-const sidebarOverlay =
-    document.getElementById("sidebar-overlay");
-
-const openSidebarButton =
-    document.getElementById("open-sidebar");
-
-const closeSidebarButton =
-    document.getElementById("close-sidebar");
-
-const themeToggle =
-    document.getElementById("theme-toggle");
-
-const clearChatButton =
-    document.getElementById("clear-chat");
-
-const chatSearch =
-    document.getElementById("chat-search");
-
-const fileStatus =
-    document.getElementById("file-status");
+let currentChatId = null;
+let currentController = null;
+let isGenerating = false;
 
 
-console.log("=================================");
-console.log("ANSWERLYABHI FRONTEND");
-console.log("Backend:", API);
-console.log("=================================");
+// =========================
+// DOM ELEMENTS
+// =========================
+
+const messageInput = document.getElementById("message");
+const sendButton = document.getElementById("send");
+const stopButton = document.getElementById("stop");
+const chat = document.getElementById("chat");
+
+const newChatButton = document.getElementById("new-chat");
+const chatList = document.getElementById("chat-list");
+
+const pdfInput = document.getElementById("pdf");
+const uploadButton = document.getElementById("upload-pdf");
+const fileStatus = document.getElementById("file-status");
+
+const sidebar = document.getElementById("sidebar");
+const sidebarOverlay = document.getElementById("sidebar-overlay");
+const menuButton = document.getElementById("menu");
+
+const themeButton = document.getElementById("theme");
+const clearButton = document.getElementById("clear");
+const searchInput = document.getElementById("search");
 
 
-/* =========================================================
-   HTML ESCAPE
-   ========================================================= */
+// =========================
+// SAFETY CHECK
+// =========================
+
+console.log("AnswerlyAbhi frontend loaded");
+console.log("API:", API);
+console.log("USER_ID:", USER_ID);
+
+
+// =========================
+// ESCAPE HTML
+// =========================
 
 function escapeHtml(text) {
-
-    const div =
-        document.createElement("div");
-
-    div.textContent =
-        String(text);
-
+    const div = document.createElement("div");
+    div.textContent = text;
     return div.innerHTML;
 }
 
 
-/* =========================================================
-   SCROLL
-   ========================================================= */
+// =========================
+// SCROLL
+// =========================
 
 function scrollToBottom() {
-
-    if (!chat) return;
-
-    requestAnimationFrame(() => {
-
-        chat.scrollTop =
-            chat.scrollHeight;
-
-    });
+    if (chat) {
+        chat.scrollTop = chat.scrollHeight;
+    }
 }
 
 
-/* =========================================================
-   ERROR
-   ========================================================= */
+// =========================
+// ERROR MESSAGE
+// =========================
 
 function showError(message) {
+    console.error(message);
 
-    if (!chat) {
+    addMessage(
+        "❌ " + escapeHtml(message),
+        "ai"
+    );
+}
 
-        alert(message);
 
+// =========================
+// MARKDOWN RENDERING
+// =========================
+
+function renderMarkdown(text) {
+    if (!text) {
+        return "";
+    }
+
+    let html = escapeHtml(text);
+
+    // Code blocks
+    html = html.replace(
+        /```([\w+-]*)\n?([\s\S]*?)```/g,
+        function (_, language, code) {
+            const lang = language || "";
+            return `
+                <pre class="code-block">
+                    <code class="language-${escapeHtml(lang)}">${code.trim()}</code>
+                </pre>
+            `;
+        }
+    );
+
+    // Inline code
+    html = html.replace(
+        /`([^`]+)`/g,
+        "<code>$1</code>"
+    );
+
+    // Bold
+    html = html.replace(
+        /\*\*(.*?)\*\*/g,
+        "<strong>$1</strong>"
+    );
+
+    // Italic
+    html = html.replace(
+        /(?<!\*)\*(?!\*)(.*?)\*(?!\*)/g,
+        "<em>$1</em>"
+    );
+
+    // Links
+    html = html.replace(
+        /(https?:\/\/[^\s<]+)/g,
+        '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+    );
+
+    // Headings
+    html = html.replace(
+        /^### (.*)$/gm,
+        "<h4>$1</h4>"
+    );
+
+    html = html.replace(
+        /^## (.*)$/gm,
+        "<h3>$1</h3>"
+    );
+
+    html = html.replace(
+        /^# (.*)$/gm,
+        "<h2>$1</h2>"
+    );
+
+    // Unordered lists
+    html = html.replace(
+        /^\s*[-*] (.*)$/gm,
+        "<li>$1</li>"
+    );
+
+    html = html.replace(
+        /(<li>.*<\/li>)/gs,
+        "<ul>$1</ul>"
+    );
+
+    // Numbered lists
+    html = html.replace(
+        /^\s*\d+\.\s+(.*)$/gm,
+        "<li>$1</li>"
+    );
+
+    // Line breaks
+    html = html.replace(
+        /\n/g,
+        "<br>"
+    );
+
+    return html;
+}
+
+
+// =========================
+// CODE COPY BUTTONS
+// =========================
+
+function addCopyButtons(container) {
+    if (!container) {
         return;
     }
 
-    const errorElement =
-        document.createElement("div");
+    const blocks = container.querySelectorAll("pre.code-block");
 
-    errorElement.className =
-        "message ai error-message";
-
-    errorElement.innerHTML = `
-        <strong>Something went wrong</strong>
-        <br>
-        ${escapeHtml(message)}
-    `;
-
-    chat.appendChild(
-        errorElement
-    );
-
-    scrollToBottom();
-}
-
-
-/* =========================================================
-   MARKDOWN
-   ========================================================= */
-
-function renderMarkdown(
-    element,
-    text
-) {
-
-    if (!element) return;
-
-    try {
-
-        if (
-            typeof marked !== "undefined" &&
-            typeof marked.parse === "function"
-        ) {
-
-            element.innerHTML =
-                marked.parse(text);
-
-        } else {
-
-            element.textContent =
-                text;
-        }
-
-
-        /* Highlight code */
-
-        if (
-            typeof hljs !== "undefined"
-        ) {
-
-            element
-                .querySelectorAll("pre code")
-                .forEach(codeBlock => {
-
-                    try {
-
-                        hljs.highlightElement(
-                            codeBlock
-                        );
-
-                    } catch (error) {
-
-                        console.warn(
-                            "Highlight error:",
-                            error
-                        );
-                    }
-
-                });
-        }
-
-
-        /* Copy buttons */
-
-        addCopyButtons(element);
-
-    } catch (error) {
-
-        console.error(
-            "Markdown error:",
-            error
-        );
-
-        element.textContent =
-            text;
-    }
-}
-
-
-/* =========================================================
-   COPY CODE BUTTONS
-   ========================================================= */
-
-function addCopyButtons(container) {
-
-    if (!container) return;
-
-    const codeBlocks =
-        container.querySelectorAll("pre");
-
-    codeBlocks.forEach(pre => {
-
-        if (
-            pre.querySelector(".copy-code")
-        ) {
-
+    blocks.forEach((block) => {
+        if (block.querySelector(".copy-code")) {
             return;
         }
 
-        const button =
-            document.createElement("button");
+        const button = document.createElement("button");
 
-        button.type =
-            "button";
+        button.className = "copy-code";
+        button.textContent = "Copy";
 
-        button.className =
-            "copy-code";
+        button.addEventListener("click", async () => {
+            const code = block.querySelector("code");
 
-        button.textContent =
-            "Copy";
-
-        button.addEventListener(
-            "click",
-            async () => {
-
-                const code =
-                    pre.querySelector("code");
-
-                if (!code) return;
-
-                try {
-
-                    await navigator.clipboard.writeText(
-                        code.innerText
-                    );
-
-                    button.textContent =
-                        "Copied!";
-
-                    setTimeout(() => {
-
-                        button.textContent =
-                            "Copy";
-
-                    }, 1500);
-
-                } catch (error) {
-
-                    console.error(
-                        "Copy failed:",
-                        error
-                    );
-
-                }
-
+            if (!code) {
+                return;
             }
-        );
 
-        pre.appendChild(button);
+            try {
+                await navigator.clipboard.writeText(
+                    code.innerText
+                );
 
+                button.textContent = "Copied!";
+
+                setTimeout(() => {
+                    button.textContent = "Copy";
+                }, 1500);
+
+            } catch (error) {
+                console.error(
+                    "COPY ERROR:",
+                    error
+                );
+            }
+        });
+
+        block.appendChild(button);
     });
 }
 
 
-/* =========================================================
-   ADD MESSAGE
-   ========================================================= */
+// =========================
+// ADD MESSAGE
+// =========================
 
-function addMessage(
-    text,
-    type
-) {
-
+function addMessage(content, role, returnElement = false) {
     if (!chat) {
-
-        console.error(
-            "Chat container not found."
-        );
-
         return null;
     }
 
+    const messageElement = document.createElement("div");
 
-    /* Remove welcome */
+    messageElement.className =
+        role === "user"
+            ? "message user-message"
+            : "message ai-message";
 
-    const welcome =
-        chat.querySelector(".welcome");
+    const bubble = document.createElement("div");
 
-    if (welcome) {
+    bubble.className = "message-bubble";
 
-        welcome.remove();
-    }
-
-
-    const element =
-        document.createElement("div");
-
-    element.className =
-        `message ${type}`;
-
-
-    if (type === "ai") {
-
-        renderMarkdown(
-            element,
-            text
-        );
-
+    if (role === "ai") {
+        bubble.innerHTML = renderMarkdown(content);
     } else {
-
-        element.textContent =
-            text;
+        bubble.innerHTML = escapeHtml(content);
     }
 
+    messageElement.appendChild(bubble);
 
-    chat.appendChild(
-        element
-    );
+    chat.appendChild(messageElement);
 
     scrollToBottom();
 
-    return element;
+    addCopyButtons(messageElement);
+
+    if (returnElement) {
+        return messageElement;
+    }
+
+    return null;
 }
 
 
-/* =========================================================
-   RESET CHAT SCREEN
-   ========================================================= */
+// =========================
+// RESET CHAT SCREEN
+// =========================
 
 function resetChatScreen() {
-
-    if (!chat) return;
+    if (!chat) {
+        return;
+    }
 
     chat.innerHTML = `
-
-        <div
-            class="welcome"
-            id="welcome"
-        >
-
-            <div class="welcome-icon">
-                ✦
-            </div>
-
-            <h2>
-                How can I help you today?
-            </h2>
-
-            <p>
-                Ask anything, learn something new,
-                write code, or solve a problem.
-            </p>
-
-            <div class="suggestions">
-
-                <button
-                    type="button"
-                    class="suggestion"
-                    data-prompt="Explain artificial intelligence in simple words."
-                >
-
-                    <span>💡</span>
-
-                    <div>
-
-                        <strong>
-                            Explain something
-                        </strong>
-
-                        <small>
-                            Make a complex topic simple
-                        </small>
-
-                    </div>
-
-                </button>
-
-
-                <button
-                    type="button"
-                    class="suggestion"
-                    data-prompt="Help me write a professional resume."
-                >
-
-                    <span>📝</span>
-
-                    <div>
-
-                        <strong>
-                            Write something
-                        </strong>
-
-                        <small>
-                            Create professional content
-                        </small>
-
-                    </div>
-
-                </button>
-
-
-                <button
-                    type="button"
-                    class="suggestion"
-                    data-prompt="Help me debug this Python code."
-                >
-
-                    <span>💻</span>
-
-                    <div>
-
-                        <strong>
-                            Write code
-                        </strong>
-
-                        <small>
-                            Build or debug your project
-                        </small>
-
-                    </div>
-
-                </button>
-
-
-                <button
-                    type="button"
-                    class="suggestion"
-                    data-prompt="Give me some creative business ideas."
-                >
-
-                    <span>🚀</span>
-
-                    <div>
-
-                        <strong>
-                            Brainstorm ideas
-                        </strong>
-
-                        <small>
-                            Explore new possibilities
-                        </small>
-
-                    </div>
-
-                </button>
-
-            </div>
-
+        <div class="welcome">
+            <h1>Hello! I'm AnswerlyAbhi</h1>
+            <p>Your personal AI assistant. How can I help you today?</p>
         </div>
     `;
-
-    setupSuggestions();
 }
 
 
-
-/* =========================================================
-   CREATE NEW CHAT
-   ========================================================= */
+// =========================
+// CREATE NEW CHAT
+// =========================
 
 async function createNewChat() {
-
     try {
+        console.log("Creating new chat...");
 
         const response = await fetch(
             `${API}/new-chat?user_id=${encodeURIComponent(USER_ID)}`,
@@ -524,8 +335,12 @@ async function createNewChat() {
             }
         );
 
-        if (!response.ok) {
+        console.log(
+            "NEW CHAT STATUS:",
+            response.status
+        );
 
+        if (!response.ok) {
             const errorText = await response.text();
 
             throw new Error(
@@ -535,19 +350,18 @@ async function createNewChat() {
 
         const data = await response.json();
 
-        if (!data.chat_id) {
+        console.log(
+            "NEW CHAT RESPONSE:",
+            data
+        );
 
+        if (!data.chat_id) {
             throw new Error(
-                "Backend did not return a chat ID."
+                "Server did not return a chat ID."
             );
         }
 
         currentChatId = data.chat_id;
-
-        console.log(
-            "New chat created:",
-            currentChatId
-        );
 
         resetChatScreen();
 
@@ -557,23 +371,23 @@ async function createNewChat() {
             messageInput.focus();
         }
 
-        /* IMPORTANT:
-           Return the ID so sendMessage()
-           knows the chat was created.
-        */
+        console.log(
+            "CURRENT CHAT ID:",
+            currentChatId
+        );
 
+        // IMPORTANT
         return currentChatId;
 
     } catch (error) {
-
         console.error(
             "CREATE CHAT ERROR:",
             error
         );
 
-        showError(
+        alert(
             "Could not create a new chat.\n\n" +
-            error.message
+            (error.message || "Please try again.")
         );
 
         return null;
@@ -581,395 +395,294 @@ async function createNewChat() {
 }
 
 
-/* =========================================================
-   LOAD CHATS
-   ========================================================= */
+// =========================
+// LOAD CHAT LIST
+// =========================
 
 async function loadChats() {
-
-    if (!chatList) return;
+    if (!chatList) {
+        return;
+    }
 
     try {
-
-        const response =
-            await fetch(
-                `${API}/chats?user_id=${encodeURIComponent(USER_ID)}`
-            );
+        const response = await fetch(
+            `${API}/chats?user_id=${encodeURIComponent(USER_ID)}`
+        );
 
         if (!response.ok) {
-
             throw new Error(
-                `Chats request failed: ${response.status}`
+                `Server returned ${response.status}`
             );
         }
 
-        const data =
-            await response.json();
+        const chats = await response.json();
 
         chatList.innerHTML = "";
 
-        if (!Array.isArray(data)) {
-
+        if (!Array.isArray(chats) || chats.length === 0) {
+            chatList.innerHTML = `
+                <div class="no-chats">
+                    No chats yet
+                </div>
+            `;
             return;
         }
 
-        if (data.length === 0) {
-
-            const empty =
-                document.createElement("div");
-
-            empty.textContent =
-                "No chats yet.";
-
-            empty.style.padding =
-                "15px 10px";
-
-            empty.style.color =
-                "#747b87";
-
-            empty.style.fontSize =
-                "12px";
-
-            chatList.appendChild(
-                empty
-            );
-
-            return;
-        }
-
-        data.forEach(item => {
-
-            if (!item.id) return;
-
-            const chatItem =
-                document.createElement("div");
+        chats.forEach((item) => {
+            const chatItem = document.createElement("div");
 
             chatItem.className =
-                "chat-item";
+                "chat-item" +
+                (item.id === currentChatId
+                    ? " active"
+                    : "");
 
-            if (
-                String(item.id) ===
-                String(currentChatId)
-            ) {
-
-                chatItem.classList.add(
-                    "active"
-                );
-            }
+            chatItem.dataset.chatId = item.id;
 
             const title =
-                document.createElement("span");
-
-            title.className =
-                "chat-title";
-
-            title.textContent =
                 item.title ||
                 "New Chat";
 
+            chatItem.innerHTML = `
+                <span class="chat-title">
+                    ${escapeHtml(title)}
+                </span>
+
+                <button
+                    class="delete-chat"
+                    title="Delete chat"
+                    type="button"
+                >
+                    ×
+                </button>
+            `;
 
             const deleteButton =
-                document.createElement("button");
+                chatItem.querySelector(
+                    ".delete-chat"
+                );
 
-            deleteButton.type =
-                "button";
+            deleteButton.addEventListener(
+                "click",
+                async (event) => {
+                    event.stopPropagation();
 
-            deleteButton.className =
-                "delete-chat";
-
-            deleteButton.textContent =
-                "×";
-
-            deleteButton.setAttribute(
-                "aria-label",
-                "Delete chat"
+                    await deleteChat(item.id);
+                }
             );
-
 
             chatItem.addEventListener(
                 "click",
                 () => {
-
-                    openChat(
-                        item.id
-                    );
-
+                    openChat(item.id);
                 }
             );
 
-
-            deleteButton.addEventListener(
-                "click",
-                event => {
-
-                    event.stopPropagation();
-
-                    deleteChat(
-                        item.id
-                    );
-
-                }
-            );
-
-
-            chatItem.appendChild(
-                title
-            );
-
-            chatItem.appendChild(
-                deleteButton
-            );
-
-            chatList.appendChild(
-                chatItem
-            );
-
+            chatList.appendChild(chatItem);
         });
 
     } catch (error) {
-
         console.error(
-            "Load chats error:",
+            "LOAD CHATS ERROR:",
             error
         );
     }
 }
 
 
-/* =========================================================
-   OPEN CHAT
-   ========================================================= */
+// =========================
+// OPEN CHAT
+// =========================
 
-async function openChat(
-    chatId
-) {
-
-    if (
-        !chatId ||
-        isGenerating
-    ) {
-
+async function openChat(chatId) {
+    if (!chatId) {
         return;
     }
 
-    currentChatId =
-        chatId;
-
-    resetChatScreen();
-
     try {
-
-        const response =
-            await fetch(
-                `${API}/messages?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(chatId)}`
-            );
+        const response = await fetch(
+            `${API}/messages?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(chatId)}`
+        );
 
         if (!response.ok) {
-
             throw new Error(
-                `Messages request failed: ${response.status}`
+                `Server returned ${response.status}`
             );
         }
 
-        const history =
-            await response.json();
+        const messages = await response.json();
+
+        currentChatId = chatId;
+
+        if (chat) {
+            chat.innerHTML = "";
+        }
 
         if (
-            Array.isArray(history) &&
-            history.length > 0
+            !Array.isArray(messages) ||
+            messages.length === 0
         ) {
-
-            const welcome =
-                chat.querySelector(
-                    ".welcome"
-                );
-
-            if (welcome) {
-
-                welcome.remove();
-            }
-
-            history.forEach(msg => {
-
-                const type =
-                    msg.role === "assistant"
-                        ? "ai"
-                        : "user";
-
+            resetChatScreen();
+        } else {
+            messages.forEach((item) => {
                 addMessage(
-                    msg.content || "",
-                    type
+                    item.content || "",
+                    item.role === "user"
+                        ? "user"
+                        : "ai"
                 );
-
             });
+        }
 
+        await loadChats();
+
+        closeSidebar();
+
+        if (messageInput) {
+            messageInput.focus();
         }
 
     } catch (error) {
-
         console.error(
-            "Could not load chat:",
+            "OPEN CHAT ERROR:",
             error
         );
 
-        showError(
-            "Could not load this conversation.\n\n" +
-            error.message
+        alert(
+            "Could not open this chat.\n\n" +
+            (error.message || "Please try again.")
         );
-    }
-
-    await loadChats();
-
-    closeMobileSidebar();
-
-    if (messageInput) {
-
-        messageInput.focus();
     }
 }
 
 
-/* =========================================================
-   DELETE CHAT
-   ========================================================= */
+// =========================
+// DELETE CHAT
+// =========================
 
-async function deleteChat(
-    chatId
-) {
-
-    if (
-        !chatId ||
-        isGenerating
-    ) {
-
+async function deleteChat(chatId) {
+    if (!chatId) {
         return;
     }
 
-    const confirmed =
-        window.confirm(
-            "Delete this conversation?"
-        );
+    const confirmed = confirm(
+        "Delete this chat?"
+    );
 
     if (!confirmed) {
-
         return;
     }
 
     try {
-
-        const response =
-            await fetch(
-                `${API}/chat/${encodeURIComponent(chatId)}?user_id=${encodeURIComponent(USER_ID)}`,
-                {
-                    method: "DELETE"
-                }
-            );
+        const response = await fetch(
+            `${API}/chat/${encodeURIComponent(chatId)}?user_id=${encodeURIComponent(USER_ID)}`,
+            {
+                method: "DELETE"
+            }
+        );
 
         if (!response.ok) {
-
-            const errorText =
-                await response.text();
-
             throw new Error(
-                `Delete failed (${response.status})`
+                `Server returned ${response.status}`
             );
         }
 
-
-        if (
-            String(currentChatId) ===
-            String(chatId)
-        ) {
-
-            currentChatId =
-                null;
+        if (currentChatId === chatId) {
+            currentChatId = null;
 
             resetChatScreen();
 
             await createNewChat();
-
         } else {
-
             await loadChats();
         }
 
     } catch (error) {
-
         console.error(
-            "Delete chat error:",
+            "DELETE CHAT ERROR:",
             error
         );
 
-        showError(
-            "Failed to delete chat.\n\n" +
-            error.message
+        alert(
+            "Could not delete the chat.\n\n" +
+            (error.message || "Please try again.")
         );
     }
 }
 
 
-/* =========================================================
-   SEND MESSAGE — TRUE STREAMING + RETRY
-   ========================================================= */
+// =========================
+// SEND MESSAGE
+// =========================
 
 async function sendMessage() {
-
     if (isGenerating) {
         return;
     }
 
+    if (!messageInput) {
+        console.error(
+            "Message input not found."
+        );
+        return;
+    }
+
     const message =
-        messageInput
-            ? messageInput.value.trim()
-            : "";
+        messageInput.value.trim();
 
     if (!message) {
         return;
     }
 
+    console.log(
+        "SEND MESSAGE:",
+        message
+    );
 
-    /* =====================================================
-       CREATE CHAT IF NEEDED
-       ===================================================== */
+    // ==========================================
+    // IMPORTANT FIX:
+    // Create a chat if none exists.
+    // Do NOT depend on a returned variable.
+    // ==========================================
 
     if (!currentChatId) {
+        console.log(
+            "No current chat. Creating one..."
+        );
 
         const newChatId =
             await createNewChat();
 
         if (!newChatId) {
+            console.error(
+                "Could not create chat."
+            );
             return;
         }
     }
 
+    console.log(
+        "Using chat:",
+        currentChatId
+    );
 
-    /* =====================================================
-       ADD USER MESSAGE
-       ===================================================== */
-
+    // Add user message
     addMessage(
         message,
         "user"
     );
 
-
-    /* Clear input */
-
+    // Clear input
     messageInput.value = "";
 
-    autoResizeTextarea();
-
-
-    /* =====================================================
-       GENERATION STATE
-       ===================================================== */
+    messageInput.style.height = "auto";
 
     isGenerating = true;
 
     currentController =
         new AbortController();
 
-
+    // UI state
     if (sendButton) {
         sendButton.disabled = true;
     }
@@ -979,399 +692,277 @@ async function sendMessage() {
     }
 
     if (stopButton) {
-        stopButton.style.display = "flex";
+        stopButton.style.display = "inline-flex";
     }
 
-
-    /* =====================================================
-       AI MESSAGE
-       ===================================================== */
-
+    // Create AI message container
     const aiMessage =
         addMessage(
             "",
-            "ai"
+            "ai",
+            true
         );
 
-    let fullReply = "";
+    const aiBubble =
+        aiMessage
+            ? aiMessage.querySelector(
+                  ".message-bubble"
+              )
+            : null;
 
+    if (aiBubble) {
+        aiBubble.innerHTML =
+            "<span>Thinking...</span>";
+    }
+
+    scrollToBottom();
 
     try {
+        const url =
+            `${API}/chat` +
+            `?user_id=${encodeURIComponent(USER_ID)}` +
+            `&chat_id=${encodeURIComponent(currentChatId)}` +
+            `&message=${encodeURIComponent(message)}`;
 
         console.log(
-            "Sending message to AnswerlyAbhi..."
+            "CHAT REQUEST:",
+            url
         );
 
-
-        /* =================================================
-           RETRY ON TEMPORARY FAILURE
-           ================================================= */
-
-        let successful = false;
-        let lastError = null;
-
-        for (
-            let attempt = 1;
-            attempt <= 2;
-            attempt++
-        ) {
-
-            try {
-
-                console.log(
-                    `AI request attempt ${attempt}/2`
-                );
-
-
-                const response =
-                    await fetch(
-                        `${API}/chat?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(currentChatId)}&message=${encodeURIComponent(message)}`,
-                        {
-                            method: "POST",
-                            signal:
-                                currentController.signal
-                        }
-                    );
-
-
-                if (!response.ok) {
-
-                    const errorText =
-                        await response.text();
-
-                    throw new Error(
-                        `Server error ${response.status}: ${errorText}`
-                    );
+        const response =
+            await fetch(
+                url,
+                {
+                    method: "POST",
+                    signal:
+                        currentController.signal
                 }
+            );
 
+        console.log(
+            "CHAT STATUS:",
+            response.status
+        );
 
-                if (!response.body) {
+        if (!response.ok) {
+            const errorText =
+                await response.text();
 
-                    throw new Error(
-                        "Streaming is not supported by this browser."
-                    );
-                }
-
-
-                /* =========================================
-                   STREAM RESPONSE
-                   ========================================= */
-
-                const reader =
-                    response.body.getReader();
-
-                const decoder =
-                    new TextDecoder("utf-8");
-
-
-                while (true) {
-
-                    const {
-                        value,
-                        done
-                    } =
-                        await reader.read();
-
-
-                    if (done) {
-                        break;
-                    }
-
-
-                    const chunk =
-                        decoder.decode(
-                            value,
-                            {
-                                stream: true
-                            }
-                        );
-
-
-                    if (!chunk) {
-                        continue;
-                    }
-
-
-                    fullReply += chunk;
-
-
-                    if (aiMessage) {
-
-                        renderMarkdown(
-                            aiMessage,
-                            fullReply
-                        );
-
-                    }
-
-
-                    scrollToBottom();
-
-                }
-
-
-                /* Flush decoder */
-
-                const remaining =
-                    decoder.decode();
-
-
-                if (remaining) {
-
-                    fullReply +=
-                        remaining;
-
-                    if (aiMessage) {
-
-                        renderMarkdown(
-                            aiMessage,
-                            fullReply
-                        );
-
-                    }
-                }
-
-
-                if (!fullReply.trim()) {
-
-                    throw new Error(
-                        "Gemini returned an empty response."
-                    );
-                }
-
-
-                successful = true;
-
-                console.log(
-                    "Gemini response completed."
-                );
-
-                break;
-
-
-            } catch (error) {
-
-                lastError = error;
-
-                /* Stop button was pressed */
-
-                if (
-                    error.name ===
-                    "AbortError"
-                ) {
-
-                    throw error;
-                }
-
-
-                console.warn(
-                    `Attempt ${attempt} failed:`,
-                    error
-                );
-
-
-                /* If no text has arrived,
-                   try once more */
-
-                if (
-                    attempt < 2 &&
-                    !fullReply.trim()
-                ) {
-
-                    await new Promise(
-                        resolve =>
-                            setTimeout(
-                                resolve,
-                                1200
-                            )
-                    );
-
-                } else {
-
-                    throw error;
-                }
-            }
-        }
-
-
-        if (!successful) {
-
-            throw (
-                lastError ||
-                new Error(
-                    "Unable to get a response."
-                )
+            throw new Error(
+                `Server returned ${response.status}: ${errorText}`
             );
         }
 
+        if (!response.body) {
+            throw new Error(
+                "The server returned no response body."
+            );
+        }
 
-        /* Refresh chat titles */
+        const reader =
+            response.body.getReader();
 
-        await loadChats();
+        const decoder =
+            new TextDecoder();
 
+        let fullResponse = "";
+
+        let firstChunk = true;
+
+        while (true) {
+            const {
+                value,
+                done
+            } = await reader.read();
+
+            if (done) {
+                break;
+            }
+
+            const chunk =
+                decoder.decode(
+                    value,
+                    {
+                        stream: true
+                    }
+                );
+
+            if (!chunk) {
+                continue;
+            }
+
+            fullResponse += chunk;
+
+            if (
+                aiBubble &&
+                firstChunk
+            ) {
+                aiBubble.innerHTML = "";
+                firstChunk = false;
+            }
+
+            if (aiBubble) {
+                aiBubble.innerHTML =
+                    renderMarkdown(
+                        fullResponse
+                    );
+
+                addCopyButtons(
+                    aiMessage
+                );
+            }
+
+            scrollToBottom();
+        }
+
+        // Flush decoder
+        const remaining =
+            decoder.decode();
+
+        if (remaining) {
+            fullResponse +=
+                remaining;
+
+            if (aiBubble) {
+                aiBubble.innerHTML =
+                    renderMarkdown(
+                        fullResponse
+                    );
+
+                addCopyButtons(
+                    aiMessage
+                );
+            }
+        }
+
+        if (!fullResponse.trim()) {
+            throw new Error(
+                "The AI returned an empty response."
+            );
+        }
+
+        console.log(
+            "AI RESPONSE COMPLETE"
+        );
 
     } catch (error) {
-
-
-        /* =================================================
-           USER STOPPED GENERATION
-           ================================================= */
+        console.error(
+            "SEND MESSAGE ERROR:",
+            error
+        );
 
         if (
             error.name ===
             "AbortError"
         ) {
+            console.log(
+                "Generation stopped by user."
+            );
 
-            if (aiMessage) {
-
-                if (fullReply.trim()) {
-
-                    renderMarkdown(
-                        aiMessage,
-                        fullReply +
-                        "\n\n*Generation stopped.*"
-                    );
-
-                } else {
-
-                    aiMessage.textContent =
-                        "Generation stopped.";
-                }
+            if (
+                aiBubble &&
+                !aiBubble.innerHTML.trim()
+            ) {
+                aiBubble.innerHTML =
+                    "<em>Generation stopped.</em>";
             }
 
         } else {
-
-
-            console.error(
-                "AI ERROR:",
-                error
-            );
-
-
-            /* If some response was already generated,
-               don't destroy it */
-
-            if (
-                aiMessage &&
-                fullReply.trim()
-            ) {
-
-                renderMarkdown(
-                    aiMessage,
-                    fullReply +
-                    "\n\n*The response was interrupted. Please try again if needed.*"
+            if (aiBubble) {
+                aiBubble.innerHTML =
+                    `<div class="error-message">
+                        ❌ Unable to get a response.
+                        <br>
+                        <small>${escapeHtml(
+                            error.message ||
+                                "Unknown error"
+                        )}</small>
+                    </div>`;
+            } else {
+                showError(
+                    "Unable to get a response."
                 );
-
-            } else if (aiMessage) {
-
-                aiMessage.innerHTML = `
-                    <strong>
-                        Unable to get a response
-                    </strong>
-                    <br>
-                    ${escapeHtml(
-                        error.message ||
-                        "Please try again."
-                    )}
-                `;
             }
         }
 
     } finally {
+        isGenerating = false;
 
-        finishGeneration();
-    }
-}
+        currentController = null;
 
-/* =========================================================
-   FINISH GENERATION
-   ========================================================= */
+        if (sendButton) {
+            sendButton.disabled = false;
+        }
 
-function finishGeneration() {
+        if (newChatButton) {
+            newChatButton.disabled = false;
+        }
 
-    isGenerating =
-        false;
+        if (stopButton) {
+            stopButton.style.display =
+                "none";
+        }
 
-    currentController =
-        null;
+        if (messageInput) {
+            messageInput.focus();
+        }
 
-
-    if (stopButton) {
-
-        stopButton.style.display =
-            "none";
-    }
-
-    if (sendButton) {
-
-        sendButton.disabled =
-            false;
-    }
-
-    if (newChatButton) {
-
-        newChatButton.disabled =
-            false;
-    }
-
-    if (messageInput) {
-
-        messageInput.focus();
+        scrollToBottom();
     }
 }
 
 
-/* =========================================================
-   STOP GENERATING
-   ========================================================= */
+// =========================
+// STOP GENERATION
+// =========================
 
-function stopGenerating() {
-
-    if (currentController) {
+function stopGeneration() {
+    if (
+        currentController &&
+        isGenerating
+    ) {
+        console.log(
+            "Stopping generation..."
+        );
 
         currentController.abort();
     }
 }
 
 
-/* =========================================================
-   PDF UPLOAD
-   ========================================================= */
+// =========================
+// UPLOAD PDF
+// =========================
 
 async function uploadPDF() {
-
     if (!pdfInput) {
         return;
     }
 
     const file =
+        pdfInput.files &&
         pdfInput.files[0];
 
     if (!file) {
+        alert(
+            "Please select a PDF first."
+        );
         return;
     }
-
 
     if (
         !file.name
             .toLowerCase()
             .endsWith(".pdf")
     ) {
-
         alert(
-            "Please select a valid PDF file."
+            "Please select a PDF file."
         );
-
-        pdfInput.value = "";
-
         return;
     }
 
-
-    /* Create chat if needed */
-
+    // Create chat if necessary
     if (!currentChatId) {
-
         const newChatId =
             await createNewChat();
 
@@ -1379,7 +970,6 @@ async function uploadPDF() {
             return;
         }
     }
-
 
     const formData =
         new FormData();
@@ -1389,19 +979,16 @@ async function uploadPDF() {
         file
     );
 
-
-    if (fileStatus) {
-
-        fileStatus.style.display =
-            "block";
-
-        fileStatus.textContent =
-            `Uploading ${file.name}...`;
+    if (uploadButton) {
+        uploadButton.disabled = true;
     }
 
+    if (fileStatus) {
+        fileStatus.textContent =
+            "Uploading PDF...";
+    }
 
     try {
-
         const response =
             await fetch(
                 `${API}/upload-pdf?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(currentChatId)}`,
@@ -1411,333 +998,194 @@ async function uploadPDF() {
                 }
             );
 
-
         if (!response.ok) {
-
             const errorText =
                 await response.text();
 
             throw new Error(
-                `HTTP ${response.status}: ${errorText}`
+                `Server returned ${response.status}: ${errorText}`
             );
         }
-
 
         const data =
             await response.json();
 
-
-        if (data.error) {
-
-            throw new Error(
-                data.error
-            );
-        }
-
-
-        addMessage(
-            `📄 Uploaded PDF: ${file.name}`,
-            "user"
+        console.log(
+            "PDF UPLOAD RESPONSE:",
+            data
         );
 
-
         if (fileStatus) {
-
             fileStatus.textContent =
-                `✓ ${file.name} uploaded successfully`;
+                `✅ ${file.name} uploaded successfully`;
         }
 
+        addMessage(
+            `📄 PDF uploaded: **${file.name}**\n\nYou can now ask questions about the document.`,
+            "ai"
+        );
 
-        await loadChats();
-
+        pdfInput.value = "";
 
     } catch (error) {
-
         console.error(
-            "PDF upload error:",
+            "PDF UPLOAD ERROR:",
             error
         );
 
-
         if (fileStatus) {
-
             fileStatus.textContent =
-                "PDF upload failed.";
+                "❌ PDF upload failed";
         }
 
-
-        showError(
-            "PDF upload failed.\n\n" +
-            error.message
+        alert(
+            "Could not upload the PDF.\n\n" +
+            (error.message ||
+                "Please try again.")
         );
 
-
     } finally {
-
-        pdfInput.value = "";
+        if (uploadButton) {
+            uploadButton.disabled =
+                false;
+        }
     }
 }
 
-    /* Create chat if needed */
 
-    if (!currentChatId) {
+// =========================
+// SIDEBAR
+// =========================
 
-        const newChatId =
-            await createNewChat();
-
-        if (!newChatId) {
-
-            return;
-        }
-    }
-
-
-    const formData =
-        new FormData();
-
-    formData.append(
-        "file",
-        file
-    );
-
-
-    if (fileStatus) {
-
-        fileStatus.style.display =
-            "block";
-
-        fileStatus.textContent =
-            `Uploading ${file.name}...`;
-    }
-
-
-    try {
-
-        const response =
-            await fetch(
-                `${API}/upload-pdf?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(currentChatId)}`,
-                {
-                    method: "POST",
-                    body: formData
-                }
-            );
-
-
-        if (!response.ok) {
-
-            const errorText =
-                await response.text();
-
-            throw new Error(
-                `HTTP ${response.status}: ${errorText}`
-            );
-        }
-
-
-        const data =
-            await response.json();
-
-
-        if (data.error) {
-
-            throw new Error(
-                data.error
-            );
-        }
-
-
-        addMessage(
-            `📄 Uploaded PDF: ${file.name}`,
-            "user"
-        );
-
-
-        if (fileStatus) {
-
-            fileStatus.textContent =
-                `✓ ${file.name} uploaded successfully`;
-        }
-
-
-        await loadChats();
-
-
-    } catch (error) {
-
-        console.error(
-            "PDF upload error:",
-            error
-        );
-
-
-        if (fileStatus) {
-
-            fileStatus.textContent =
-                "PDF upload failed.";
-        }
-
-
-        showError(
-            "PDF upload failed.\n\n" +
-            error.message
-        );
-
-    } finally {
-
-        pdfInput.value =
-            "";
-    }
-
-
-
-/* =========================================================
-   MOBILE SIDEBAR
-   ========================================================= */
-
-function openMobileSidebar() {
-
+function openSidebar() {
     if (sidebar) {
-
         sidebar.classList.add(
             "open"
         );
     }
 
     if (sidebarOverlay) {
-
         sidebarOverlay.classList.add(
-            "active"
+            "show"
         );
     }
 }
 
-
-function closeMobileSidebar() {
-
+function closeSidebar() {
     if (sidebar) {
-
         sidebar.classList.remove(
             "open"
         );
     }
 
     if (sidebarOverlay) {
-
         sidebarOverlay.classList.remove(
-            "active"
+            "show"
         );
     }
 }
 
 
-/* =========================================================
-   CHAT SEARCH
-   ========================================================= */
+// =========================
+// SEARCH CHATS
+// =========================
 
 function searchChats() {
-
-    if (
-        !chatList ||
-        !chatSearch
-    ) {
-
+    if (!chatList || !searchInput) {
         return;
     }
 
-    const search =
-        chatSearch.value
+    const query =
+        searchInput.value
             .trim()
             .toLowerCase();
-
 
     const items =
         chatList.querySelectorAll(
             ".chat-item"
         );
 
-
-    items.forEach(item => {
-
+    items.forEach((item) => {
         const title =
-            item.querySelector(
-                ".chat-title"
-            );
+            item
+                .querySelector(
+                    ".chat-title"
+                )
+                ?.textContent
+                .toLowerCase() || "";
 
-        const text =
-            title
-                ? title.textContent.toLowerCase()
-                : "";
-
-
-        item.style.display =
-            !search ||
-            text.includes(search)
-                ? "flex"
-                : "none";
-
+        if (
+            !query ||
+            title.includes(query)
+        ) {
+            item.style.display = "";
+        } else {
+            item.style.display =
+                "none";
+        }
     });
 }
 
 
-/* =========================================================
-   THEME
-   ========================================================= */
+// =========================
+// THEME
+// =========================
+
+function toggleTheme() {
+    const isDark =
+        document.body.classList.toggle(
+            "dark"
+        );
+
+    localStorage.setItem(
+        "answerlyabhi-theme",
+        isDark
+            ? "dark"
+            : "light"
+    );
+}
 
 function loadTheme() {
-
     const savedTheme =
         localStorage.getItem(
             "answerlyabhi-theme"
         );
 
-
-    if (savedTheme === "light") {
-
+    if (savedTheme === "dark") {
         document.body.classList.add(
-            "light-theme"
-        );
-
-    } else {
-
-        document.body.classList.remove(
-            "light-theme"
+            "dark"
         );
     }
 }
 
 
-function toggleTheme() {
+// =========================
+// CLEAR CURRENT SCREEN
+// =========================
 
-    const isLight =
-        document.body.classList.toggle(
-            "light-theme"
-        );
+function clearCurrentScreen() {
+    resetChatScreen();
 
-
-    localStorage.setItem(
-        "answerlyabhi-theme",
-        isLight
-            ? "light"
-            : "dark"
-    );
+    if (messageInput) {
+        messageInput.value = "";
+        messageInput.style.height =
+            "auto";
+        messageInput.focus();
+    }
 }
 
 
-/* =========================================================
-   TEXTAREA AUTO RESIZE
-   ========================================================= */
+// =========================
+// TEXTAREA AUTO RESIZE
+// =========================
 
 function autoResizeTextarea() {
-
     if (!messageInput) {
-
         return;
     }
 
-
     messageInput.style.height =
         "auto";
-
 
     messageInput.style.height =
         Math.min(
@@ -1747,417 +1195,223 @@ function autoResizeTextarea() {
 }
 
 
-/* =========================================================
-   SUGGESTIONS
-   ========================================================= */
+// =========================
+// SUGGESTIONS
+// =========================
 
 function setupSuggestions() {
-
-    if (!chat) {
-
-        return;
-    }
-
-
     const suggestions =
-        chat.querySelectorAll(
+        document.querySelectorAll(
             ".suggestion"
         );
 
-
-    suggestions.forEach(button => {
-
-        button.addEventListener(
-            "click",
-            () => {
-
-                const prompt =
-                    button.dataset.prompt;
-
-
-                if (!prompt) {
-
-                    return;
-                }
-
-
-                if (messageInput) {
+    suggestions.forEach(
+        (suggestion) => {
+            suggestion.addEventListener(
+                "click",
+                () => {
+                    if (!messageInput) {
+                        return;
+                    }
 
                     messageInput.value =
-                        prompt;
+                        suggestion.textContent.trim();
 
                     autoResizeTextarea();
 
                     messageInput.focus();
                 }
-
-            }
-        );
-
-    });
-}
-
-
-/* =========================================================
-   CLEAR CURRENT SCREEN
-   ========================================================= */
-
-function clearCurrentChat() {
-
-    if (isGenerating) {
-
-        return;
-    }
-
-
-    resetChatScreen();
-
-
-    if (messageInput) {
-
-        messageInput.value =
-            "";
-
-        autoResizeTextarea();
-
-        messageInput.focus();
-    }
-}
-
-
-/* =========================================================
-   KEYBOARD
-   ========================================================= */
-
-function setupKeyboard() {
-
-    if (!messageInput) {
-
-        return;
-    }
-
-
-    messageInput.addEventListener(
-        "keydown",
-        event => {
-
-            if (
-                event.key === "Enter" &&
-                !event.shiftKey
-            ) {
-
-                event.preventDefault();
-
-                sendMessage();
-            }
-
+            );
         }
     );
-
-
-    messageInput.addEventListener(
-        "input",
-        autoResizeTextarea
-    );
 }
 
 
-/* =========================================================
-   EVENT LISTENERS
-   ========================================================= */
+// =========================
+// MOBILE KEYBOARD FIX
+// =========================
+
+function setupMobileKeyboard() {
+    if (!window.visualViewport) {
+        return;
+    }
+
+    const updateViewport =
+        () => {
+            document.documentElement.style.setProperty(
+                "--viewport-height",
+                `${window.visualViewport.height}px`
+            );
+        };
+
+    window.visualViewport.addEventListener(
+        "resize",
+        updateViewport
+    );
+
+    updateViewport();
+}
+
+
+// =========================
+// EVENT LISTENERS
+// =========================
 
 if (sendButton) {
-
     sendButton.addEventListener(
         "click",
         sendMessage
     );
 }
 
-
 if (stopButton) {
-
     stopButton.addEventListener(
         "click",
-        stopGenerating
+        stopGeneration
     );
 }
-
 
 if (newChatButton) {
-
     newChatButton.addEventListener(
         "click",
-        createNewChat
+        async () => {
+            if (isGenerating) {
+                return;
+            }
+
+            await createNewChat();
+        }
     );
 }
 
-
-if (pdfInput) {
-
-    pdfInput.addEventListener(
-        "change",
+if (uploadButton) {
+    uploadButton.addEventListener(
+        "click",
         uploadPDF
     );
 }
 
-
-if (openSidebarButton) {
-
-    openSidebarButton.addEventListener(
-        "click",
-        openMobileSidebar
-    );
-}
-
-
-if (closeSidebarButton) {
-
-    closeSidebarButton.addEventListener(
-        "click",
-        closeMobileSidebar
-    );
-}
-
-
-if (sidebarOverlay) {
-
-    sidebarOverlay.addEventListener(
-        "click",
-        closeMobileSidebar
-    );
-}
-
-
-if (themeToggle) {
-
-    themeToggle.addEventListener(
+if (themeButton) {
+    themeButton.addEventListener(
         "click",
         toggleTheme
     );
 }
 
-
-if (clearChatButton) {
-
-    clearChatButton.addEventListener(
+if (clearButton) {
+    clearButton.addEventListener(
         "click",
-        clearCurrentChat
+        clearCurrentScreen
     );
 }
 
+if (menuButton) {
+    menuButton.addEventListener(
+        "click",
+        openSidebar
+    );
+}
 
-if (chatSearch) {
+if (sidebarOverlay) {
+    sidebarOverlay.addEventListener(
+        "click",
+        closeSidebar
+    );
+}
 
-    chatSearch.addEventListener(
+if (searchInput) {
+    searchInput.addEventListener(
         "input",
         searchChats
     );
 }
 
+if (messageInput) {
+    messageInput.addEventListener(
+        "input",
+        autoResizeTextarea
+    );
 
-/* ESC closes sidebar */
+    messageInput.addEventListener(
+        "keydown",
+        (event) => {
+            if (
+                event.key === "Enter" &&
+                !event.shiftKey
+            ) {
+                event.preventDefault();
 
-document.addEventListener(
-    "keydown",
-    event => {
-
-        if (
-            event.key === "Escape"
-        ) {
-
-            closeMobileSidebar();
+                if (
+                    !isGenerating
+                ) {
+                    sendMessage();
+                }
+            }
         }
+    );
+}
 
+
+// =========================
+// START APP
+// =========================
+
+async function startApp() {
+    console.log(
+        "Starting AnswerlyAbhi..."
+    );
+
+    loadTheme();
+
+    setupSuggestions();
+
+    setupMobileKeyboard();
+
+    await loadChats();
+
+    // Create first chat automatically
+    if (!currentChatId) {
+        await createNewChat();
     }
-);
+
+    console.log(
+        "AnswerlyAbhi ready."
+    );
+}
 
 
-/* =========================================================
-   BACKEND TEST
-   ========================================================= */
+// =========================
+// HEALTH CHECK
+// =========================
 
-async function testBackend() {
-
+async function testServer() {
     try {
-
-        console.log(
-            "Testing AnswerlyAbhi backend..."
-        );
-
-
         const response =
             await fetch(
                 `${API}/health`
             );
 
-
-        console.log(
-            "Backend status:",
-            response.status
-        );
-
-
-        if (!response.ok) {
-
-            return false;
-        }
-
-
         const data =
             await response.json();
 
-
         console.log(
-            "Backend health:",
+            "SERVER HEALTH:",
             data
         );
 
-
-        return (
-            data.status === "ok"
-        );
-
     } catch (error) {
-
         console.error(
-            "Backend connection failed:",
+            "SERVER HEALTH ERROR:",
             error
         );
-
-        return false;
     }
 }
 
 
-/* =========================================================
-   START APPLICATION
-   ========================================================= */
-
-async function startApp() {
-
-    console.log(
-        "Starting AnswerlyAbhi..."
-    );
-
-
-    loadTheme();
-
-    setupKeyboard();
-
-    setupSuggestions();
-
-    autoResizeTextarea();
-
-
-    const backendOK =
-        await testBackend();
-
-
-    if (!backendOK) {
-
-        showError(
-            "Cannot connect to the AnswerlyAbhi backend.\n\n" +
-            "Please check whether the backend is online."
-        );
-
-        return;
-    }
-
-
-    console.log(
-        "Backend connection successful!"
-    );
-
-
-    await loadChats();
-
-
-    if (!currentChatId) {
-
-        await createNewChat();
-    }
-
-
-    if (
-    messageInput &&
-    window.innerWidth > 768
-) {
-
-    messageInput.focus();
-}
-}
-
-
-/* =========================================================
-   START
-   ========================================================= */
+// =========================
+// START
+// =========================
 
 startApp();
-/* =========================================================
-   MOBILE KEYBOARD / VIEWPORT FIX
-   Keeps the message box above the mobile keyboard
-   ========================================================= */
 
-function setupMobileKeyboardFix() {
-
-    if (!window.visualViewport) {
-        return;
-    }
-
-    const viewport = window.visualViewport;
-
-    function updateKeyboardPosition() {
-
-        const composer =
-            document.querySelector(".input-area") ||
-            document.querySelector(".composer-wrapper");
-
-        if (!composer) {
-            return;
-        }
-
-        const keyboardHeight =
-            Math.max(
-                0,
-                window.innerHeight - viewport.height - viewport.offsetTop
-            );
-
-        if (window.innerWidth <= 768) {
-
-            composer.style.transform =
-                `translateY(-${keyboardHeight}px)`;
-
-        } else {
-
-            composer.style.transform =
-                "translateY(0)";
-        }
-
-        requestAnimationFrame(() => {
-            scrollToBottom();
-        });
-    }
-
-    viewport.addEventListener(
-        "resize",
-        updateKeyboardPosition
-    );
-
-    viewport.addEventListener(
-        "scroll",
-        updateKeyboardPosition
-    );
-
-    window.addEventListener(
-        "resize",
-        updateKeyboardPosition
-    );
-
-    updateKeyboardPosition();
-}
-
-
-/* Start mobile keyboard fix */
-
-setupMobileKeyboardFix();
+testServer();
