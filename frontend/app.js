@@ -30,32 +30,21 @@ let isGenerating = false;
    ========================================================= */
 
 function getUserId() {
-
-    let userId =
-        localStorage.getItem(
-            "answerlyabhi-user-id"
-        );
+    let userId = localStorage.getItem("answerlyabhi-user-id");
 
     if (!userId) {
-
         userId =
-            crypto.randomUUID();
+            typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : "user-" + Date.now() + "-" + Math.random().toString(36).slice(2);
 
-        localStorage.setItem(
-            "answerlyabhi-user-id",
-            userId
-        );
+        localStorage.setItem("answerlyabhi-user-id", userId);
     }
 
     return userId;
 }
 
 const USER_ID = getUserId();
-
-console.log(
-    "AnswerlyAbhi User ID:",
-    USER_ID
-);
 
 
 /* =========================================================
@@ -519,70 +508,66 @@ function resetChatScreen() {
 }
 
 
+
 /* =========================================================
    CREATE NEW CHAT
    ========================================================= */
 
 async function createNewChat() {
 
-    if (isGenerating) {
-
-        return null;
-    }
-
     try {
 
-        const response =
-            await fetch(
-                `${API}/new-chat?user_id=${encodeURIComponent(USER_ID)}`,`${API}/new-chat`,
-                {
-                    method: "POST"
-                }
-            );
+        const response = await fetch(
+            `${API}/new-chat?user_id=${encodeURIComponent(USER_ID)}`,
+            {
+                method: "POST"
+            }
+        );
 
         if (!response.ok) {
 
-            const errorText =
-                await response.text();
+            const errorText = await response.text();
 
             throw new Error(
-                `New chat failed (${response.status})`
+                `Server returned ${response.status}: ${errorText}`
             );
         }
 
-        const data =
-            await response.json();
+        const data = await response.json();
 
-        if (
-            !data ||
-            !data.chat_id
-        ) {
+        if (!data.chat_id) {
 
             throw new Error(
                 "Backend did not return a chat ID."
             );
         }
 
-        currentChatId =
-            data.chat_id;
+        currentChatId = data.chat_id;
+
+        console.log(
+            "New chat created:",
+            currentChatId
+        );
 
         resetChatScreen();
 
         await loadChats();
 
-        closeMobileSidebar();
-
         if (messageInput) {
-
             messageInput.focus();
         }
+
+        /* IMPORTANT:
+           Return the ID so sendMessage()
+           knows the chat was created.
+        */
 
         return currentChatId;
 
     } catch (error) {
 
         console.error(
-            "Create chat error:",
+            "CREATE CHAT ERROR:",
             error
         );
 
@@ -924,13 +909,12 @@ async function deleteChat(
 
 
 /* =========================================================
-   SEND MESSAGE — TRUE STREAMING
+   SEND MESSAGE — TRUE STREAMING + RETRY
    ========================================================= */
 
 async function sendMessage() {
 
     if (isGenerating) {
-
         return;
     }
 
@@ -939,14 +923,14 @@ async function sendMessage() {
             ? messageInput.value.trim()
             : "";
 
-
     if (!message) {
-
         return;
     }
 
 
-    /* Create chat if needed */
+    /* =====================================================
+       CREATE CHAT IF NEEDED
+       ===================================================== */
 
     if (!currentChatId) {
 
@@ -954,13 +938,14 @@ async function sendMessage() {
             await createNewChat();
 
         if (!newChatId) {
-
             return;
         }
     }
 
 
-    /* Add user message */
+    /* =====================================================
+       ADD USER MESSAGE
+       ===================================================== */
 
     addMessage(
         message,
@@ -975,35 +960,32 @@ async function sendMessage() {
     autoResizeTextarea();
 
 
-    /* Generation state */
+    /* =====================================================
+       GENERATION STATE
+       ===================================================== */
 
-    isGenerating =
-        true;
+    isGenerating = true;
 
     currentController =
         new AbortController();
 
 
     if (sendButton) {
-
-        sendButton.disabled =
-            true;
+        sendButton.disabled = true;
     }
 
     if (newChatButton) {
-
-        newChatButton.disabled =
-            true;
+        newChatButton.disabled = true;
     }
 
     if (stopButton) {
-
-        stopButton.style.display =
-            "flex";
+        stopButton.style.display = "flex";
     }
 
 
-    /* AI message */
+    /* =====================================================
+       AI MESSAGE
+       ===================================================== */
 
     const aiMessage =
         addMessage(
@@ -1017,169 +999,228 @@ async function sendMessage() {
     try {
 
         console.log(
-            "Sending message to Gemini..."
+            "Sending message to AnswerlyAbhi..."
         );
-
-
-        const response =
-            await fetch(
-                `${API}/chat?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(currentChatId)}&message=${encodeURIComponent(message)}`,
-                {
-                    method: "POST",
-                    signal:
-                        currentController.signal
-                }
-            );
-
-
-        if (!response.ok) {
-
-            const errorText =
-                await response.text();
-
-            throw new Error(
-                `Server error ${response.status}: ${errorText}`
-            );
-        }
 
 
         /* =================================================
-           TRUE STREAMING
+           RETRY ON TEMPORARY FAILURE
            ================================================= */
 
-        if (!response.body) {
+        let successful = false;
+        let lastError = null;
 
-            throw new Error(
-                "Streaming is not supported by this browser."
-            );
-        }
+        for (
+            let attempt = 1;
+            attempt <= 2;
+            attempt++
+        ) {
 
-
-        const reader =
-            response.body.getReader();
-
-        const decoder =
-            new TextDecoder(
-                "utf-8"
-            );
-
-
-        let firstChunk = true;
-
-
-        while (true) {
-
-            const {
-                value,
-                done
-            } =
-                await reader.read();
-
-
-            if (done) {
-
-                break;
-            }
-
-
-            const chunk =
-                decoder.decode(
-                    value,
-                    {
-                        stream: true
-                    }
-                );
-
-
-            if (!chunk) {
-
-                continue;
-            }
-
-
-            fullReply +=
-                chunk;
-
-
-            /*
-             * Render continuously.
-             * This makes Gemini appear
-             * word/chunk by chunk.
-             */
-
-            if (aiMessage) {
-
-                renderMarkdown(
-                    aiMessage,
-                    fullReply
-                );
-
-            }
-
-
-            scrollToBottom();
-
-
-            if (firstChunk) {
-
-                firstChunk =
-                    false;
+            try {
 
                 console.log(
-                    "Gemini streaming started."
+                    `AI request attempt ${attempt}/2`
                 );
-            }
 
+
+                const response =
+                    await fetch(
+                        `${API}/chat?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(currentChatId)}&message=${encodeURIComponent(message)}`,
+                        {
+                            method: "POST",
+                            signal:
+                                currentController.signal
+                        }
+                    );
+
+
+                if (!response.ok) {
+
+                    const errorText =
+                        await response.text();
+
+                    throw new Error(
+                        `Server error ${response.status}: ${errorText}`
+                    );
+                }
+
+
+                if (!response.body) {
+
+                    throw new Error(
+                        "Streaming is not supported by this browser."
+                    );
+                }
+
+
+                /* =========================================
+                   STREAM RESPONSE
+                   ========================================= */
+
+                const reader =
+                    response.body.getReader();
+
+                const decoder =
+                    new TextDecoder("utf-8");
+
+
+                while (true) {
+
+                    const {
+                        value,
+                        done
+                    } =
+                        await reader.read();
+
+
+                    if (done) {
+                        break;
+                    }
+
+
+                    const chunk =
+                        decoder.decode(
+                            value,
+                            {
+                                stream: true
+                            }
+                        );
+
+
+                    if (!chunk) {
+                        continue;
+                    }
+
+
+                    fullReply += chunk;
+
+
+                    if (aiMessage) {
+
+                        renderMarkdown(
+                            aiMessage,
+                            fullReply
+                        );
+
+                    }
+
+
+                    scrollToBottom();
+
+                }
+
+
+                /* Flush decoder */
+
+                const remaining =
+                    decoder.decode();
+
+
+                if (remaining) {
+
+                    fullReply +=
+                        remaining;
+
+                    if (aiMessage) {
+
+                        renderMarkdown(
+                            aiMessage,
+                            fullReply
+                        );
+
+                    }
+                }
+
+
+                if (!fullReply.trim()) {
+
+                    throw new Error(
+                        "Gemini returned an empty response."
+                    );
+                }
+
+
+                successful = true;
+
+                console.log(
+                    "Gemini response completed."
+                );
+
+                break;
+
+
+            } catch (error) {
+
+                lastError = error;
+
+                /* Stop button was pressed */
+
+                if (
+                    error.name ===
+                    "AbortError"
+                ) {
+
+                    throw error;
+                }
+
+
+                console.warn(
+                    `Attempt ${attempt} failed:`,
+                    error
+                );
+
+
+                /* If no text has arrived,
+                   try once more */
+
+                if (
+                    attempt < 2 &&
+                    !fullReply.trim()
+                ) {
+
+                    await new Promise(
+                        resolve =>
+                            setTimeout(
+                                resolve,
+                                1200
+                            )
+                    );
+
+                } else {
+
+                    throw error;
+                }
+            }
         }
 
 
-        /* Flush decoder */
+        if (!successful) {
 
-        const remaining =
-            decoder.decode();
-
-        if (remaining) {
-
-            fullReply +=
-                remaining;
-
-            if (aiMessage) {
-
-                renderMarkdown(
-                    aiMessage,
-                    fullReply
-                );
-            }
-        }
-
-
-        if (!fullReply.trim()) {
-
-            throw new Error(
-                "Gemini returned an empty response."
+            throw (
+                lastError ||
+                new Error(
+                    "Unable to get a response."
+                )
             );
         }
 
 
-        console.log(
-            "Gemini response completed."
-        );
-
+        /* Refresh chat titles */
 
         await loadChats();
 
 
     } catch (error) {
 
+
+        /* =================================================
+           USER STOPPED GENERATION
+           ================================================= */
+
         if (
             error.name ===
             "AbortError"
         ) {
-
-            /*
-             * Keep the text generated
-             * before Stop was clicked.
-             */
 
             if (aiMessage) {
 
@@ -1200,12 +1241,28 @@ async function sendMessage() {
 
         } else {
 
+
             console.error(
                 "AI ERROR:",
                 error
             );
 
-            if (aiMessage) {
+
+            /* If some response was already generated,
+               don't destroy it */
+
+            if (
+                aiMessage &&
+                fullReply.trim()
+            ) {
+
+                renderMarkdown(
+                    aiMessage,
+                    fullReply +
+                    "\n\n*The response was interrupted. Please try again if needed.*"
+                );
+
+            } else if (aiMessage) {
 
                 aiMessage.innerHTML = `
                     <strong>
@@ -1213,11 +1270,11 @@ async function sendMessage() {
                     </strong>
                     <br>
                     ${escapeHtml(
-                        error.message
+                        error.message ||
+                        "Please try again."
                     )}
                 `;
             }
-
         }
 
     } finally {
@@ -1225,7 +1282,6 @@ async function sendMessage() {
         finishGeneration();
     }
 }
-
 
 /* =========================================================
    FINISH GENERATION
@@ -1285,7 +1341,6 @@ function stopGenerating() {
 async function uploadPDF() {
 
     if (!pdfInput) {
-
         return;
     }
 
@@ -1293,7 +1348,6 @@ async function uploadPDF() {
         pdfInput.files[0];
 
     if (!file) {
-
         return;
     }
 
@@ -1308,12 +1362,121 @@ async function uploadPDF() {
             "Please select a valid PDF file."
         );
 
-        pdfInput.value =
-            "";
+        pdfInput.value = "";
 
         return;
     }
 
+
+    /* Create chat if needed */
+
+    if (!currentChatId) {
+
+        const newChatId =
+            await createNewChat();
+
+        if (!newChatId) {
+            return;
+        }
+    }
+
+
+    const formData =
+        new FormData();
+
+    formData.append(
+        "file",
+        file
+    );
+
+
+    if (fileStatus) {
+
+        fileStatus.style.display =
+            "block";
+
+        fileStatus.textContent =
+            `Uploading ${file.name}...`;
+    }
+
+
+    try {
+
+        const response =
+            await fetch(
+                `${API}/upload-pdf?user_id=${encodeURIComponent(USER_ID)}&chat_id=${encodeURIComponent(currentChatId)}`,
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
+
+
+        if (!response.ok) {
+
+            const errorText =
+                await response.text();
+
+            throw new Error(
+                `HTTP ${response.status}: ${errorText}`
+            );
+        }
+
+
+        const data =
+            await response.json();
+
+
+        if (data.error) {
+
+            throw new Error(
+                data.error
+            );
+        }
+
+
+        addMessage(
+            `📄 Uploaded PDF: ${file.name}`,
+            "user"
+        );
+
+
+        if (fileStatus) {
+
+            fileStatus.textContent =
+                `✓ ${file.name} uploaded successfully`;
+        }
+
+
+        await loadChats();
+
+
+    } catch (error) {
+
+        console.error(
+            "PDF upload error:",
+            error
+        );
+
+
+        if (fileStatus) {
+
+            fileStatus.textContent =
+                "PDF upload failed.";
+        }
+
+
+        showError(
+            "PDF upload failed.\n\n" +
+            error.message
+        );
+
+
+    } finally {
+
+        pdfInput.value = "";
+    }
+}
 
     /* Create chat if needed */
 
